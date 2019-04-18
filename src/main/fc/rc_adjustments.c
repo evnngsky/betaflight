@@ -473,6 +473,9 @@ static int applyStepAdjustment(controlRateConfig_t *controlRateConfig, uint8_t a
         currentPidProfile->feedForwardTransition = newValue;
         blackboxLogInflightAdjustmentEvent(ADJUSTMENT_FEEDFORWARD_TRANSITION, newValue);
         break;
+    case ADJUSTMENT_VTX_CHANNEL:
+        vtxIncrementChannel();
+        break;
     default:
         newValue = -1;
         break;
@@ -639,10 +642,6 @@ static int applyAbsoluteAdjustment(controlRateConfig_t *controlRateConfig, adjus
         currentPidProfile->feedForwardTransition = newValue;
         blackboxLogInflightAdjustmentEvent(ADJUSTMENT_FEEDFORWARD_TRANSITION, newValue);
         break;
-    case ADJUSTMENT_VTX_CHANNEL:
-        vtxIncrementChannel();
-        break;
-
     default:
         newValue = -1;
         break;
