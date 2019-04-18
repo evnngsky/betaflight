@@ -50,6 +50,7 @@
 #include "io/ledstrip.h"
 #include "io/motors.h"
 #include "io/pidaudio.h"
+#include "io/vtx_control.h"
 
 #include "osd/osd.h"
 
@@ -58,6 +59,8 @@
 #include "pg/rx.h"
 
 #include "rx/rx.h"
+
+
 
 #include "rc_adjustments.h"
 
@@ -248,6 +251,10 @@ static const adjustmentConfig_t defaultAdjustmentConfigs[ADJUSTMENT_FUNCTION_COU
         .adjustmentFunction = ADJUSTMENT_LED_PROFILE,
         .mode = ADJUSTMENT_MODE_SELECT,
         .data = { .switchPositions = 3 }
+    }, {
+        .adjustmentFunction = ADJUSTMENT_VTX_CHANNEL,
+        .mode = ADJUSTMENT_MODE_STEP,
+        .data = { .step = 1 }
     }
 };
 
@@ -286,6 +293,7 @@ static const char * const adjustmentLabels[] = {
     "ROLL F",
     "YAW F",
     "OSD PROFILE",
+    "VTX_CHANNEL",
 };
 
 static int adjustmentRangeNameIndex = 0;
@@ -631,6 +639,10 @@ static int applyAbsoluteAdjustment(controlRateConfig_t *controlRateConfig, adjus
         currentPidProfile->feedForwardTransition = newValue;
         blackboxLogInflightAdjustmentEvent(ADJUSTMENT_FEEDFORWARD_TRANSITION, newValue);
         break;
+    case ADJUSTMENT_VTX_CHANNEL:
+        vtxIncrementChannel();
+        break;
+
     default:
         newValue = -1;
         break;
