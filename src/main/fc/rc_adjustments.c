@@ -38,6 +38,7 @@
 #include "config/feature.h"
 
 #include "drivers/time.h"
+#include "drivers/vtx_common.h"
 
 #include "fc/config.h"
 #include "fc/controlrate_profile.h"
@@ -50,7 +51,7 @@
 #include "io/ledstrip.h"
 #include "io/motors.h"
 #include "io/pidaudio.h"
-#include "io/vtx_control.h"
+
 
 #include "osd/osd.h"
 
@@ -474,7 +475,10 @@ static int applyStepAdjustment(controlRateConfig_t *controlRateConfig, uint8_t a
         blackboxLogInflightAdjustmentEvent(ADJUSTMENT_FEEDFORWARD_TRANSITION, newValue);
         break;
     case ADJUSTMENT_VTX_CHANNEL:
-        vtxIncrementChannel();
+        //under Construction 
+        vtxCommonGetBandAndChannel(const vtxDevice_t *vtxDevice, uint8_t *pBand, uint8_t *pChannel);    
+        newValue = constrain(currentPidProfile->feedForwardTransition + delta, 1, 100);
+        vtxCommonSetBandAndChannel(vtxDevice, band, newValue);
         break;
     default:
         newValue = -1;
