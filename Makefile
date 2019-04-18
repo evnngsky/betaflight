@@ -16,7 +16,7 @@
 #
 
 # The target to build, see VALID_TARGETS below
-TARGET    ?= NAZE
+TARGET    ?= BETAFLIGHTF3
 
 # Compile-time options
 OPTIONS   ?=
@@ -24,7 +24,10 @@ OPTIONS   ?=
 # compile for OpenPilot BootLoader support
 OPBL      ?= no
 
-# Debugger optons, must be empty or GDB
+# Debugger optons:
+#   empty           - ordinary build with all optimizations enabled
+#   RELWITHDEBINFO  - ordinary build with debug symbols and all optimizations enabled
+#   GDB             - debug build with minimum number of optimizations
 DEBUG     ?=
 
 # Insert the debugging hardfault debugger
@@ -37,6 +40,7 @@ SERIAL_DEVICE   ?= $(firstword $(wildcard /dev/ttyUSB*) no-port-found)
 # Flash size (KB).  Some low-end chips actually have more flash than advertised, use this to override.
 FLASH_SIZE ?=
 
+
 ###############################################################################
 # Things that need to be maintained as the source changes
 #
@@ -45,86 +49,62 @@ FORKNAME      = betaflight
 
 # Working directories
 ROOT            := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
-SRC_DIR         = $(ROOT)/src/main
-OBJECT_DIR      = $(ROOT)/obj/main
-BIN_DIR         = $(ROOT)/obj
-CMSIS_DIR       = $(ROOT)/lib/main/CMSIS
-INCLUDE_DIRS    = $(SRC_DIR) \
-                  $(ROOT)/src/main/target
-LINKER_DIR      = $(ROOT)/src/main/target
+SRC_DIR         := $(ROOT)/src/main
+OBJECT_DIR      := $(ROOT)/obj/main
+BIN_DIR         := $(ROOT)/obj
+CMSIS_DIR       := $(ROOT)/lib/main/CMSIS
+INCLUDE_DIRS    := $(SRC_DIR) \
+                   $(ROOT)/src/main/target \
+                   $(ROOT)/src/main/startup
+LINKER_DIR      := $(ROOT)/src/main/target/link
+
+## V                 : Set verbosity level based on the V= parameter
+##                     V=0 Low
+##                     V=1 High
+include $(ROOT)/make/build_verbosity.mk
+
+# Build tools, so we all share the same versions
+# import macros common to all supported build systems
+include $(ROOT)/make/system-id.mk
+
+# developer preferences, edit these at will, they'll be gitignored
+-include $(ROOT)/make/local.mk
+
+# configure some directories that are relative to wherever ROOT_DIR is located
+ifndef TOOLS_DIR
+TOOLS_DIR := $(ROOT)/tools
+endif
+BUILD_DIR := $(ROOT)/build
+DL_DIR    := $(ROOT)/downloads
+
+export RM := rm
+
+# import macros that are OS specific
+include $(ROOT)/make/$(OSFAMILY).mk
+
+# include the tools makefile
+include $(ROOT)/make/tools.mk
 
 # default xtal value for F4 targets
-HSE_VALUE       = 8000000
+HSE_VALUE       ?= 8000000
 
 # used for turning on features like VCP and SDCARD
 FEATURES        =
 
-ALT_TARGETS     = $(sort $(filter-out target, $(basename $(notdir $(wildcard $(ROOT)/src/main/target/*/*.mk)))))
-OPBL_TARGETS    = $(filter %_OPBL, $(ALT_TARGETS))
+# used to disable features based on flash space shortage (larger number => more features disabled)
+FEATURE_CUT_LEVEL_SUPPLIED := $(FEATURE_CUT_LEVEL)
+FEATURE_CUT_LEVEL =
 
-#VALID_TARGETS  = $(F1_TARGETS) $(F3_TARGETS) $(F4_TARGETS)
-VALID_TARGETS   = $(dir $(wildcard $(ROOT)/src/main/target/*/target.mk))
-VALID_TARGETS  := $(subst /,, $(subst ./src/main/target/,, $(VALID_TARGETS)))
-VALID_TARGETS  := $(VALID_TARGETS) $(ALT_TARGETS)
-VALID_TARGETS  := $(sort $(VALID_TARGETS))
+# The list of targets to build for 'pre-push'
+PRE_PUSH_TARGET_LIST ?= BETAFLIGHTF3 OMNIBUSF4 SPRACINGF7DUAL SITL test-representative
 
-ifeq ($(filter $(TARGET),$(ALT_TARGETS)), $(TARGET))
-BASE_TARGET    := $(firstword $(subst /,, $(subst ./src/main/target/,, $(dir $(wildcard $(ROOT)/src/main/target/*/$(TARGET).mk)))))
--include $(ROOT)/src/main/target/$(BASE_TARGET)/$(TARGET).mk
-else
-BASE_TARGET    := $(TARGET)
-endif
+include $(ROOT)/make/targets.mk
 
-ifeq ($(filter $(TARGET),$(OPBL_TARGETS)), $(TARGET))
-OPBL            = yes
-endif
+REVISION := $(shell git log -1 --format="%h")
 
-# silently ignore if the file is not present. Allows for target specific.
--include $(ROOT)/src/main/target/$(BASE_TARGET)/target.mk
-
-F4_TARGETS      = $(F405_TARGETS) $(F411_TARGETS)
-
-ifeq ($(filter $(TARGET),$(VALID_TARGETS)),)
-$(error Target '$(TARGET)' is not valid, must be one of $(VALID_TARGETS). Have you prepared a valid target.mk?)
-endif
-
-ifeq ($(filter $(TARGET),$(F1_TARGETS) $(F3_TARGETS) $(F4_TARGETS)),)
-$(error Target '$(TARGET)' has not specified a valid STM group, must be one of F1, F3, F405, or F411. Have you prepared a valid target.mk?)
-endif
-
-128K_TARGETS  = $(F1_TARGETS)
-256K_TARGETS  = $(F3_TARGETS)
-512K_TARGETS  = $(F411_TARGETS)
-1024K_TARGETS = $(F405_TARGETS)
-
-# Configure default flash sizes for the targets (largest size specified gets hit first) if flash not specified already.
-ifeq ($(FLASH_SIZE),)
-ifeq ($(TARGET),$(filter $(TARGET),$(1024K_TARGETS)))
-FLASH_SIZE = 1024
-else ifeq ($(TARGET),$(filter $(TARGET),$(512K_TARGETS)))
-FLASH_SIZE = 512
-else ifeq ($(TARGET),$(filter $(TARGET),$(256K_TARGETS)))
-FLASH_SIZE = 256
-else ifeq ($(TARGET),$(filter $(TARGET),$(128K_TARGETS)))
-FLASH_SIZE = 128
-else
-$(error FLASH_SIZE not configured for target $(TARGET))
-endif
-endif
-
-# note that there is no hardfault debugging startup file assembly handler for other platforms
-ifeq ($(DEBUG_HARDFAULTS),F3)
-CFLAGS               += -DDEBUG_HARDFAULTS
-STM32F30x_COMMON_SRC  = startup_stm32f3_debug_hardfault_handler.S
-else
-STM32F30x_COMMON_SRC  = startup_stm32f30x_md_gcc.S
-endif
-
-REVISION = $(shell git log -1 --format="%h")
-
-FC_VER_MAJOR := $(shell grep " FC_VERSION_MAJOR" src/main/version.h | awk '{print $$3}' )
-FC_VER_MINOR := $(shell grep " FC_VERSION_MINOR" src/main/version.h | awk '{print $$3}' )
-FC_VER_PATCH := $(shell grep " FC_VERSION_PATCH" src/main/version.h | awk '{print $$3}' )
+FC_VER_MAJOR := $(shell grep " FC_VERSION_MAJOR" src/main/build/version.h | awk '{print $$3}' )
+FC_VER_MINOR := $(shell grep " FC_VERSION_MINOR" src/main/build/version.h | awk '{print $$3}' )
+FC_VER_PATCH := $(shell grep " FC_VERSION_PATCH" src/main/build/version.h | awk '{print $$3}' )
 
 FC_VER := $(FC_VER_MAJOR).$(FC_VER_MINOR).$(FC_VER_PATCH)
 
@@ -137,200 +117,56 @@ FATFS_SRC       = $(notdir $(wildcard $(FATFS_DIR)/*.c))
 
 CSOURCES        := $(shell find $(SRC_DIR) -name '*.c')
 
-ifeq ($(TARGET),$(filter $(TARGET),$(F3_TARGETS)))
-# F3 TARGETS
+LD_FLAGS         :=
 
-STDPERIPH_DIR   = $(ROOT)/lib/main/STM32F30x_StdPeriph_Driver
-STDPERIPH_SRC   = $(notdir $(wildcard $(STDPERIPH_DIR)/src/*.c))
-EXCLUDES        = stm32f30x_crc.c \
-                  stm32f30x_can.c
-
-STDPERIPH_SRC   := $(filter-out ${EXCLUDES}, $(STDPERIPH_SRC))
-DEVICE_STDPERIPH_SRC = $(STDPERIPH_SRC)
-
-VPATH           := $(VPATH):$(CMSIS_DIR)/CM1/CoreSupport:$(CMSIS_DIR)/CM1/DeviceSupport/ST/STM32F30x
-CMSIS_SRC       = $(notdir $(wildcard $(CMSIS_DIR)/CM1/CoreSupport/*.c \
-                  $(CMSIS_DIR)/CM1/DeviceSupport/ST/STM32F30x/*.c))
-
-INCLUDE_DIRS    := $(INCLUDE_DIRS) \
-                   $(STDPERIPH_DIR)/inc \
-                   $(CMSIS_DIR)/CM1/CoreSupport \
-                   $(CMSIS_DIR)/CM1/DeviceSupport/ST/STM32F30x
-
-ifneq ($(filter VCP, $(FEATURES)),)
-INCLUDE_DIRS    := $(INCLUDE_DIRS) \
-                   $(USBFS_DIR)/inc \
-                   $(ROOT)/src/main/vcp
-
-VPATH           := $(VPATH):$(USBFS_DIR)/src
-
-DEVICE_STDPERIPH_SRC := $(DEVICE_STDPERIPH_SRC)\
-                        $(USBPERIPH_SRC)
-endif
-
-ifneq ($(filter SDCARD, $(FEATURES)),)
-INCLUDE_DIRS    := $(INCLUDE_DIRS) \
-                   $(FATFS_DIR) \
-
-VPATH           := $(VPATH):$(FATFS_DIR)
-endif
-
-LD_SCRIPT       = $(LINKER_DIR)/stm32_flash_f303_$(FLASH_SIZE)k.ld
-
-ARCH_FLAGS      = -mthumb -mcpu=cortex-m4 -mfloat-abi=hard -mfpu=fpv4-sp-d16 -fsingle-precision-constant -Wdouble-promotion
-DEVICE_FLAGS    = -DSTM32F303xC -DSTM32F303
-# End F3 targets
 #
-# Start F4 targets
-else ifeq ($(TARGET),$(filter $(TARGET), $(F4_TARGETS)))
+# Default Tool options - can be overridden in {mcu}.mk files.
+#
+ifeq ($(DEBUG),GDB)
+OPTIMISE_DEFAULT      := -Og
 
-#STDPERIPH
-STDPERIPH_DIR   = $(ROOT)/lib/main/STM32F4xx_StdPeriph_Driver
-STDPERIPH_SRC   = $(notdir $(wildcard $(STDPERIPH_DIR)/src/*.c))
-EXCLUDES        = stm32f4xx_crc.c \
-                  stm32f4xx_can.c \
-                  stm32f4xx_fmc.c \
-                  stm32f4xx_sai.c \
-                  stm32f4xx_cec.c \
-                  stm32f4xx_dsi.c \
-                  stm32f4xx_flash_ramfunc.c \
-                  stm32f4xx_fmpi2c.c \
-                  stm32f4xx_lptim.c \
-                  stm32f4xx_qspi.c \
-                  stm32f4xx_spdifrx.c \
-                  stm32f4xx_cryp.c \
-                  stm32f4xx_cryp_aes.c \
-                  stm32f4xx_hash_md5.c \
-                  stm32f4xx_cryp_des.c \
-                  stm32f4xx_rtc.c \
-                  stm32f4xx_hash.c \
-                  stm32f4xx_dbgmcu.c \
-                  stm32f4xx_cryp_tdes.c \
-                  stm32f4xx_hash_sha1.c
-
-
-ifeq ($(TARGET),$(filter $(TARGET), $(F411_TARGETS)))
-EXCLUDES += stm32f4xx_fsmc.c
-endif
-
-STDPERIPH_SRC := $(filter-out ${EXCLUDES}, $(STDPERIPH_SRC))
-
-#USB
-USBCORE_DIR = $(ROOT)/lib/main/STM32_USB_Device_Library/Core
-USBCORE_SRC = $(notdir $(wildcard $(USBCORE_DIR)/src/*.c))
-USBOTG_DIR  = $(ROOT)/lib/main/STM32_USB_OTG_Driver
-USBOTG_SRC  = $(notdir $(wildcard $(USBOTG_DIR)/src/*.c))
-EXCLUDES    = usb_bsp_template.c \
-              usb_conf_template.c \
-              usb_hcd_int.c \
-              usb_hcd.c \
-              usb_otg.c
-
-USBOTG_SRC  := $(filter-out ${EXCLUDES}, $(USBOTG_SRC))
-USBCDC_DIR  = $(ROOT)/lib/main/STM32_USB_Device_Library/Class/cdc
-USBCDC_SRC  = $(notdir $(wildcard $(USBCDC_DIR)/src/*.c))
-EXCLUDES    = usbd_cdc_if_template.c
-USBCDC_SRC  := $(filter-out ${EXCLUDES}, $(USBCDC_SRC))
-VPATH       := $(VPATH):$(USBOTG_DIR)/src:$(USBCORE_DIR)/src:$(USBCDC_DIR)/src
-
-DEVICE_STDPERIPH_SRC := $(STDPERIPH_SRC) \
-                        $(USBOTG_SRC) \
-                        $(USBCORE_SRC) \
-                        $(USBCDC_SRC)
-
-#CMSIS
-VPATH           := $(VPATH):$(CMSIS_DIR)/CM4/CoreSupport:$(CMSIS_DIR)/CM4/DeviceSupport/ST/STM32F4xx
-CMSIS_SRC       = $(notdir $(wildcard $(CMSIS_DIR)/CM4/CoreSupport/*.c \
-                  $(CMSIS_DIR)/CM4/DeviceSupport/ST/STM32F4xx/*.c))
-INCLUDE_DIRS    := $(INCLUDE_DIRS) \
-                   $(STDPERIPH_DIR)/inc \
-                   $(USBOTG_DIR)/inc \
-                   $(USBCORE_DIR)/inc \
-                   $(USBCDC_DIR)/inc \
-                   $(USBFS_DIR)/inc \
-                   $(CMSIS_DIR)/CM4/CoreSupport \
-                   $(CMSIS_DIR)/CM4/DeviceSupport/ST/STM32F4xx \
-                   $(ROOT)/src/main/vcpf4
-
-ifneq ($(filter SDCARD,$(FEATURES)),)
-INCLUDE_DIRS    := $(INCLUDE_DIRS) \
-                   $(FATFS_DIR)
-VPATH           := $(VPATH):$(FATFS_DIR)
-endif
-
-#Flags
-ARCH_FLAGS      = -mthumb -mcpu=cortex-m4 -march=armv7e-m -mfloat-abi=hard -mfpu=fpv4-sp-d16 -fsingle-precision-constant -Wdouble-promotion
-
-ifeq ($(TARGET),$(filter $(TARGET),$(F411_TARGETS)))
-DEVICE_FLAGS    = -DSTM32F411xE
-LD_SCRIPT       = $(LINKER_DIR)/stm32_flash_f411.ld
-else ifeq ($(TARGET),$(filter $(TARGET),$(F405_TARGETS)))
-DEVICE_FLAGS    = -DSTM32F40_41xxx
-LD_SCRIPT       = $(LINKER_DIR)/stm32_flash_f405.ld
+LTO_FLAGS             := $(OPTIMISE_DEFAULT)
+DEBUG_FLAGS            = -ggdb3 -DDEBUG
 else
-$(error Unknown MCU for F4 target)
+ifeq ($(DEBUG),INFO)
+DEBUG_FLAGS            = -ggdb3
 endif
-DEVICE_FLAGS    += -DHSE_VALUE=$(HSE_VALUE)
+OPTIMISATION_BASE     := -flto -fuse-linker-plugin -ffast-math
+OPTIMISE_DEFAULT      := -O2
+OPTIMISE_SPEED        := -Ofast
+OPTIMISE_SIZE         := -Os
 
-# End F4 targets
-#
-# Start F1 targets
+LTO_FLAGS             := $(OPTIMISATION_BASE) $(OPTIMISE_SPEED)
+endif
+
+VPATH 			:= $(VPATH):$(ROOT)/make/mcu
+VPATH 			:= $(VPATH):$(ROOT)/make
+
+# start specific includes
+include $(ROOT)/make/mcu/$(TARGET_MCU).mk
+
+# openocd specific includes
+include $(ROOT)/make/openocd.mk
+
+# Configure default flash sizes for the targets (largest size specified gets hit first) if flash not specified already.
+ifeq ($(FLASH_SIZE),)
+ifneq ($(TARGET_FLASH),)
+FLASH_SIZE := $(TARGET_FLASH)
 else
-
-STDPERIPH_DIR   = $(ROOT)/lib/main/STM32F10x_StdPeriph_Driver
-STDPERIPH_SRC   = $(notdir $(wildcard $(STDPERIPH_DIR)/src/*.c))
-EXCLUDES        = stm32f10x_crc.c \
-                  stm32f10x_cec.c \
-                  stm32f10x_can.c
-
-STDPERIPH_SRC   := $(filter-out ${EXCLUDES}, $(STDPERIPH_SRC))
-
-# Search path and source files for the CMSIS sources
-VPATH           := $(VPATH):$(CMSIS_DIR)/CM3/CoreSupport:$(CMSIS_DIR)/CM3/DeviceSupport/ST/STM32F10x
-CMSIS_SRC       = $(notdir $(wildcard $(CMSIS_DIR)/CM3/CoreSupport/*.c \
-                  $(CMSIS_DIR)/CM3/DeviceSupport/ST/STM32F10x/*.c))
-
-INCLUDE_DIRS    := $(INCLUDE_DIRS) \
-                   $(STDPERIPH_DIR)/inc \
-                   $(CMSIS_DIR)/CM3/CoreSupport \
-                   $(CMSIS_DIR)/CM3/DeviceSupport/ST/STM32F10x \
-
-DEVICE_STDPERIPH_SRC = $(STDPERIPH_SRC)
-
-ifneq ($(filter VCP, $(FEATURES)),)
-INCLUDE_DIRS    := $(INCLUDE_DIRS) \
-                   $(USBFS_DIR)/inc \
-                   $(ROOT)/src/main/vcp
-
-VPATH           := $(VPATH):$(USBFS_DIR)/src
-
-DEVICE_STDPERIPH_SRC := $(DEVICE_STDPERIPH_SRC) \
-                        $(USBPERIPH_SRC)
-
+$(error FLASH_SIZE not configured for target $(TARGET))
+endif
 endif
 
-LD_SCRIPT       = $(LINKER_DIR)/stm32_flash_f103_$(FLASH_SIZE)k.ld
-ARCH_FLAGS      = -mthumb -mcpu=cortex-m3
-
-ifeq ($(DEVICE_FLAGS),)
-DEVICE_FLAGS    = -DSTM32F10X_MD
-endif
-DEVICE_FLAGS   += -DSTM32F10X
-
-endif
-#
-# End F1 targets
-#
-ifneq ($(BASE_TARGET), $(TARGET))
-TARGET_FLAGS  := $(TARGET_FLAGS) -D$(BASE_TARGET)
-endif
-
-ifneq ($(FLASH_SIZE),)
 DEVICE_FLAGS  := $(DEVICE_FLAGS) -DFLASH_SIZE=$(FLASH_SIZE)
-endif
 
 ifneq ($(HSE_VALUE),)
 DEVICE_FLAGS  := $(DEVICE_FLAGS) -DHSE_VALUE=$(HSE_VALUE)
+endif
+
+ifneq ($(FEATURE_CUT_LEVEL_SUPPLIED),)
+DEVICE_FLAGS  := $(DEVICE_FLAGS) -DFEATURE_CUT_LEVEL=$(FEATURE_CUT_LEVEL_SUPPLIED)
+else ifneq ($(FEATURE_CUT_LEVEL),)
+DEVICE_FLAGS  := $(DEVICE_FLAGS) -DFEATURE_CUT_LEVEL=$(FEATURE_CUT_LEVEL)
 endif
 
 TARGET_DIR     = $(ROOT)/src/main/target/$(BASE_TARGET)
@@ -338,210 +174,20 @@ TARGET_DIR_SRC = $(notdir $(wildcard $(TARGET_DIR)/*.c))
 
 ifeq ($(OPBL),yes)
 TARGET_FLAGS := -DOPBL $(TARGET_FLAGS)
-ifeq ($(TARGET), $(filter $(TARGET),$(F405_TARGETS)))
-LD_SCRIPT = $(LINKER_DIR)/stm32_flash_f405_opbl.ld
-else ifeq ($(TARGET), $(filter $(TARGET),$(F411_TARGETS)))
-LD_SCRIPT = $(LINKER_DIR)/stm32_flash_f411_opbl.ld
-else ifeq ($(TARGET), $(filter $(TARGET),$(F3_TARGETS)))
-LD_SCRIPT = $(LINKER_DIR)/stm32_flash_f303_$(FLASH_SIZE)k_opbl.ld
-else ifeq ($(TARGET), $(filter $(TARGET),$(F1_TARGETS)))
-LD_SCRIPT = $(LINKER_DIR)/stm32_flash_f103_$(FLASH_SIZE)k_opbl.ld
-endif
 .DEFAULT_GOAL := binary
 else
 .DEFAULT_GOAL := hex
 endif
 
 INCLUDE_DIRS    := $(INCLUDE_DIRS) \
+                   $(ROOT)/lib/main/MAVLink
+
+INCLUDE_DIRS    := $(INCLUDE_DIRS) \
                    $(TARGET_DIR)
 
 VPATH           := $(VPATH):$(TARGET_DIR)
 
-COMMON_SRC = \
-            build_config.c \
-            debug.c \
-            version.c \
-            $(TARGET_DIR_SRC) \
-            main.c \
-            mw.c \
-            common/encoding.c \
-            common/filter.c \
-            common/maths.c \
-            common/printf.c \
-            common/typeconversion.c \
-            config/config.c \
-            config/runtime_config.c \
-            drivers/adc.c \
-            drivers/buf_writer.c \
-            drivers/bus_i2c_soft.c \
-            drivers/bus_spi.c \
-            drivers/exti.c \
-            drivers/gyro_sync.c \
-            drivers/io.c \
-            drivers/light_led.c \
-            drivers/pwm_mapping.c \
-            drivers/pwm_output.c \
-            drivers/pwm_rx.c \
-            drivers/rcc.c \
-            drivers/serial.c \
-            drivers/serial_uart.c \
-            drivers/sound_beeper.c \
-            drivers/system.c \
-            drivers/timer.c \
-            flight/altitudehold.c \
-            flight/failsafe.c \
-            flight/imu.c \
-            flight/mixer.c \
-            flight/pid.c \
-            io/beeper.c \
-            io/rc_controls.c \
-            io/rc_curves.c \
-            io/serial.c \
-            io/serial_4way.c \
-            io/serial_4way_avrootloader.c \
-            io/serial_4way_stk500v2.c \
-            io/serial_cli.c \
-            io/serial_msp.c \
-            io/statusindicator.c \
-            rx/ibus.c \
-            rx/jetiexbus.c \
-            rx/msp.c \
-            rx/pwm.c \
-            rx/rx.c \
-            rx/sbus.c \
-            rx/spektrum.c \
-            rx/sumd.c \
-            rx/sumh.c \
-            rx/xbus.c \
-            scheduler/scheduler.c \
-            scheduler/scheduler_tasks.c \
-            sensors/acceleration.c \
-            sensors/battery.c \
-            sensors/boardalignment.c \
-            sensors/compass.c \
-            sensors/gyro.c \
-            sensors/initialisation.c \
-            $(CMSIS_SRC) \
-            $(DEVICE_STDPERIPH_SRC)
-
-HIGHEND_SRC = \
-            blackbox/blackbox.c \
-            blackbox/blackbox_io.c \
-            common/colorconversion.c \
-            drivers/display_ug2864hsweg01.c \
-            flight/gtune.c \
-            flight/navigation.c \
-            flight/gps_conversion.c \
-            io/gps.c \
-            io/ledstrip.c \
-            io/display.c \
-            sensors/sonar.c \
-            sensors/barometer.c \
-            telemetry/telemetry.c \
-            telemetry/frsky.c \
-            telemetry/hott.c \
-            telemetry/smartport.c \
-            telemetry/ltm.c
-
-ifeq ($(TARGET),$(filter $(TARGET),$(F4_TARGETS)))
-VCP_SRC = \
-            vcpf4/stm32f4xx_it.c \
-            vcpf4/usb_bsp.c \
-            vcpf4/usbd_desc.c \
-            vcpf4/usbd_usr.c \
-            vcpf4/usbd_cdc_vcp.c \
-            drivers/serial_usb_vcp.c
-else
-VCP_SRC = \
-            vcp/hw_config.c \
-            vcp/stm32_it.c \
-            vcp/usb_desc.c \
-            vcp/usb_endp.c \
-            vcp/usb_istr.c \
-            vcp/usb_prop.c \
-            vcp/usb_pwr.c \
-            drivers/serial_usb_vcp.c \
-            drivers/usb_io.c
-endif
-
-STM32F10x_COMMON_SRC = \
-            startup_stm32f10x_md_gcc.S \
-            drivers/adc_stm32f10x.c \
-            drivers/bus_i2c_stm32f10x.c \
-            drivers/dma.c \
-            drivers/gpio_stm32f10x.c \
-            drivers/inverter.c \
-            drivers/serial_softserial.c \
-            drivers/serial_uart_stm32f10x.c \
-            drivers/system_stm32f10x.c \
-            drivers/timer_stm32f10x.c
-
-STM32F30x_COMMON_SRC = \
-            startup_stm32f30x_md_gcc.S \
-            target/system_stm32f30x.c \
-            drivers/adc_stm32f30x.c \
-            drivers/bus_i2c_stm32f30x.c \
-            drivers/dma.c \
-            drivers/gpio_stm32f30x.c \
-            drivers/light_ws2811strip_stm32f30x.c \
-            drivers/serial_uart_stm32f30x.c \
-            drivers/system_stm32f30x.c \
-            drivers/timer_stm32f30x.c
-
-STM32F4xx_COMMON_SRC = \
-            startup_stm32f40xx.s \
-            target/system_stm32f4xx.c \
-            drivers/accgyro_mpu.c \
-            drivers/adc_stm32f4xx.c \
-            drivers/adc_stm32f4xx.c \
-            drivers/bus_i2c_stm32f10x.c \
-            drivers/gpio_stm32f4xx.c \
-            drivers/inverter.c \
-            drivers/serial_softserial.c \
-            drivers/serial_uart_stm32f4xx.c \
-            drivers/system_stm32f4xx.c \
-            drivers/timer_stm32f4xx.c \
-            drivers/dma_stm32f4xx.c
-
-# check if target.mk supplied
-ifeq ($(TARGET),$(filter $(TARGET),$(F4_TARGETS)))
-TARGET_SRC := $(STM32F4xx_COMMON_SRC) $(TARGET_SRC)
-else ifeq ($(TARGET),$(filter $(TARGET),$(F3_TARGETS)))
-TARGET_SRC := $(STM32F30x_COMMON_SRC) $(TARGET_SRC)
-else ifeq ($(TARGET),$(filter $(TARGET),$(F1_TARGETS)))
-TARGET_SRC := $(STM32F10x_COMMON_SRC) $(TARGET_SRC)
-endif
-
-ifneq ($(filter ONBOARDFLASH,$(FEATURES)),)
-TARGET_SRC += \
-            drivers/flash_m25p16.c \
-            io/flashfs.c
-endif
-
-ifeq ($(TARGET),$(filter $(TARGET),$(F4_TARGETS) $(F3_TARGETS)))
-TARGET_SRC += $(HIGHEND_SRC)
-else ifneq ($(filter HIGHEND,$(FEATURES)),)
-TARGET_SRC += $(HIGHEND_SRC)
-endif
-
-TARGET_SRC += $(COMMON_SRC)
-
-ifneq ($(filter SDCARD,$(FEATURES)),)
-TARGET_SRC += \
-            drivers/sdcard.c \
-            drivers/sdcard_standard.c \
-            io/asyncfatfs/asyncfatfs.c \
-            io/asyncfatfs/fat_standard.c
-endif
-
-ifneq ($(filter VCP,$(FEATURES)),)
-TARGET_SRC += $(VCP_SRC)
-endif
-# end target specific make file checks
-
-
-# Search path and source files for the ST stdperiph library
-VPATH        := $(VPATH):$(STDPERIPH_DIR)/src
+include $(ROOT)/make/source.mk
 
 ###############################################################################
 # Things that might need changing to use different tools
@@ -555,35 +201,34 @@ CCACHE :=
 endif
 
 # Tool names
-CC          := $(CCACHE) arm-none-eabi-gcc
-OBJCOPY     := arm-none-eabi-objcopy
-SIZE        := arm-none-eabi-size
+CROSS_CC    := $(CCACHE) $(ARM_SDK_PREFIX)gcc
+CROSS_CXX   := $(CCACHE) $(ARM_SDK_PREFIX)g++
+CROSS_GDB   := $(ARM_SDK_PREFIX)gdb
+OBJCOPY     := $(ARM_SDK_PREFIX)objcopy
+OBJDUMP     := $(ARM_SDK_PREFIX)objdump
+SIZE        := $(ARM_SDK_PREFIX)size
 
 #
 # Tool options.
 #
+CC_DEBUG_OPTIMISATION   := $(OPTIMISE_DEFAULT)
+CC_DEFAULT_OPTIMISATION := $(OPTIMISATION_BASE) $(OPTIMISE_DEFAULT)
+CC_SPEED_OPTIMISATION   := $(OPTIMISATION_BASE) $(OPTIMISE_SPEED)
+CC_SIZE_OPTIMISATION    := $(OPTIMISATION_BASE) $(OPTIMISE_SIZE)
+CC_NO_OPTIMISATION      := 
 
-ifeq ($(DEBUG),GDB)
-OPTIMIZE    = -O0
-LTO_FLAGS   = $(OPTIMIZE)
-else
-OPTIMIZE    = -Os
-LTO_FLAGS   = -flto -fuse-linker-plugin $(OPTIMIZE)
-endif
-
-DEBUG_FLAGS = -ggdb3 -DDEBUG
-
-CFLAGS      += $(ARCH_FLAGS) \
-              $(LTO_FLAGS) \
+CFLAGS     += $(ARCH_FLAGS) \
               $(addprefix -D,$(OPTIONS)) \
               $(addprefix -I,$(INCLUDE_DIRS)) \
               $(DEBUG_FLAGS) \
-              -std=gnu99 \
+              -std=gnu11 \
               -Wall -Wextra -Wunsafe-loop-optimizations -Wdouble-promotion \
               -ffunction-sections \
               -fdata-sections \
+              -fno-common \
               -pedantic \
               $(DEVICE_FLAGS) \
+              -D_GNU_SOURCE \
               -DUSE_STDPERIPH_DRIVER \
               -D$(TARGET) \
               $(TARGET_FLAGS) \
@@ -591,14 +236,17 @@ CFLAGS      += $(ARCH_FLAGS) \
               -D'__TARGET__="$(TARGET)"' \
               -D'__REVISION__="$(REVISION)"' \
               -save-temps=obj \
-              -MMD -MP
+              -MMD -MP \
+              $(EXTRA_FLAGS)
 
 ASFLAGS     = $(ARCH_FLAGS) \
+              $(DEBUG_FLAGS) \
               -x assembler-with-cpp \
               $(addprefix -I,$(INCLUDE_DIRS)) \
               -MMD -MP
 
-LDFLAGS     = -lm \
+ifeq ($(LD_FLAGS),)
+LD_FLAGS     = -lm \
               -nostartfiles \
               --specs=nano.specs \
               -lc \
@@ -611,7 +259,9 @@ LDFLAGS     = -lm \
               -Wl,-L$(LINKER_DIR) \
               -Wl,--cref \
               -Wl,--no-wchar-size-warning \
+              -Wl,--print-memory-usage \
               -T$(LD_SCRIPT)
+endif
 
 ###############################################################################
 # No user-serviceable parts below
@@ -628,147 +278,339 @@ CPPCHECK        = cppcheck $(CSOURCES) --enable=all --platform=unix64 \
 TARGET_BIN      = $(BIN_DIR)/$(FORKNAME)_$(FC_VER)_$(TARGET).bin
 TARGET_HEX      = $(BIN_DIR)/$(FORKNAME)_$(FC_VER)_$(TARGET).hex
 TARGET_ELF      = $(OBJECT_DIR)/$(FORKNAME)_$(TARGET).elf
-TARGET_OBJS     = $(addsuffix .o,$(addprefix $(OBJECT_DIR)/$(TARGET)/,$(basename $(TARGET_SRC))))
-TARGET_DEPS     = $(addsuffix .d,$(addprefix $(OBJECT_DIR)/$(TARGET)/,$(basename $(TARGET_SRC))))
+TARGET_LST      = $(OBJECT_DIR)/$(FORKNAME)_$(TARGET).lst
+TARGET_OBJS     = $(addsuffix .o,$(addprefix $(OBJECT_DIR)/$(TARGET)/,$(basename $(SRC))))
+TARGET_DEPS     = $(addsuffix .d,$(addprefix $(OBJECT_DIR)/$(TARGET)/,$(basename $(SRC))))
 TARGET_MAP      = $(OBJECT_DIR)/$(FORKNAME)_$(TARGET).map
 
 
 CLEAN_ARTIFACTS := $(TARGET_BIN)
 CLEAN_ARTIFACTS += $(TARGET_HEX)
 CLEAN_ARTIFACTS += $(TARGET_ELF) $(TARGET_OBJS) $(TARGET_MAP)
+CLEAN_ARTIFACTS += $(TARGET_LST)
+
+# Make sure build date and revision is updated on every incremental build
+$(OBJECT_DIR)/$(TARGET)/build/version.o : $(SRC)
 
 # List of buildable ELF files and their object dependencies.
 # It would be nice to compute these lists, but that seems to be just beyond make.
 
+$(TARGET_LST): $(TARGET_ELF)
+	$(V0) $(OBJDUMP) -S --disassemble $< > $@
+
 $(TARGET_HEX): $(TARGET_ELF)
-	$(OBJCOPY) -O ihex --set-start 0x8000000 $< $@
+	@echo "Creating HEX $(TARGET_HEX)" "$(STDOUT)"
+	$(V1) $(OBJCOPY) -O ihex --set-start 0x8000000 $< $@
 
 $(TARGET_BIN): $(TARGET_ELF)
-	$(OBJCOPY) -O binary $< $@
+	@echo "Creating BIN $(TARGET_BIN)" "$(STDOUT)"
+	$(V1) $(OBJCOPY) -O binary $< $@
 
-$(TARGET_ELF):  $(TARGET_OBJS)
-	@echo LD $(notdir $@)
-	@$(CC) -o $@ $^ $(LDFLAGS)
-	$(SIZE) $(TARGET_ELF)
+$(TARGET_ELF): $(TARGET_OBJS) $(LD_SCRIPT)
+	@echo "Linking $(TARGET)" "$(STDOUT)"
+	$(V1) $(CROSS_CC) -o $@ $(filter-out %.ld,$^) $(LD_FLAGS)
+	$(V1) $(SIZE) $(TARGET_ELF)
 
 # Compile
+
+## compile_file takes two arguments: (1) optimisation description string and (2) optimisation compiler flag
+define compile_file
+	echo "%% ($(1)) $<" "$(STDOUT)" && \
+	$(CROSS_CC) -c -o $@ $(CFLAGS) $(2) $<
+endef
+
+ifeq ($(DEBUG),GDB)
 $(OBJECT_DIR)/$(TARGET)/%.o: %.c
-	@mkdir -p $(dir $@)
-	@echo %% $(notdir $<)
-	@$(CC) -c -o $@ $(CFLAGS) $<
+	$(V1) mkdir -p $(dir $@)
+	$(V1) $(if $(findstring $<,$(NOT_OPTIMISED_SRC)), \
+		$(call compile_file,not optimised, $(CC_NO_OPTIMISATION)) \
+	, \
+		$(call compile_file,debug,$(CC_DEBUG_OPTIMISATION)) \
+	)
+else
+$(OBJECT_DIR)/$(TARGET)/%.o: %.c
+	$(V1) mkdir -p $(dir $@)
+	$(V1) $(if $(findstring $<,$(NOT_OPTIMISED_SRC)), \
+		$(call compile_file,not optimised,$(CC_NO_OPTIMISATION)) \
+	, \
+		$(if $(findstring $(subst ./src/main/,,$<),$(SPEED_OPTIMISED_SRC)), \
+			$(call compile_file,speed optimised,$(CC_SPEED_OPTIMISATION)) \
+		, \
+			$(if $(findstring $(subst ./src/main/,,$<),$(SIZE_OPTIMISED_SRC)), \
+				$(call compile_file,size optimised,$(CC_SIZE_OPTIMISATION)) \
+			, \
+				$(call compile_file,optimised,$(CC_DEFAULT_OPTIMISATION)) \
+			) \
+		) \
+	)
+endif
 
 # Assemble
 $(OBJECT_DIR)/$(TARGET)/%.o: %.s
-	@mkdir -p $(dir $@)
-	@echo %% $(notdir $<)
-	@$(CC) -c -o $@ $(ASFLAGS) $<
+	$(V1) mkdir -p $(dir $@)
+	@echo "%% $(notdir $<)" "$(STDOUT)"
+	$(V1) $(CROSS_CC) -c -o $@ $(ASFLAGS) $<
 
 $(OBJECT_DIR)/$(TARGET)/%.o: %.S
-	@mkdir -p $(dir $@)
-	@echo %% $(notdir $<)
-	@$(CC) -c -o $@ $(ASFLAGS) $<
+	$(V1) mkdir -p $(dir $@)
+	@echo "%% $(notdir $<)" "$(STDOUT)"
+	$(V1) $(CROSS_CC) -c -o $@ $(ASFLAGS) $<
 
 
-## all               : Build all valid targets
-all: $(VALID_TARGETS)
+## all               : Build all targets (excluding unsupported)
+all: $(SUPPORTED_TARGETS)
+
+## all_with_unsupported : Build all targets (including unsupported)
+all_with_unsupported: $(VALID_TARGETS)
+
+## unsupported : Build unsupported targets
+unsupported: $(UNSUPPORTED_TARGETS)
+
+## pre-push : The minimum verification that should be run before pushing, to check if CI has a chance of succeeding
+pre-push:
+	$(MAKE) $(addprefix clean_,$(PRE_PUSH_TARGET_LIST)) $(PRE_PUSH_TARGET_LIST) EXTRA_FLAGS=-Werror
+
+## official          : Build all official (travis) targets
+official: $(OFFICIAL_TARGETS)
+
+## targets-group-1   : build some targets
+targets-group-1: $(GROUP_1_TARGETS)
+
+## targets-group-2   : build some targets
+targets-group-2: $(GROUP_2_TARGETS)
+
+## targets-group-3   : build some targets
+targets-group-3: $(GROUP_3_TARGETS)
+
+## targets-group-3   : build some targets
+targets-group-4: $(GROUP_4_TARGETS)
+
+## targets-group-rest: build the rest of the targets (not listed in group 1, 2 or 3)
+targets-group-rest: $(GROUP_OTHER_TARGETS)
 
 $(VALID_TARGETS):
-		echo "" && \
-		echo "Building $@" && \
-		$(MAKE) binary hex TARGET=$@ && \
-		echo "Building $@ succeeded."
+	$(V0) @echo "Building $@" && \
+	$(MAKE) binary hex TARGET=$@ && \
+	echo "Building $@ succeeded."
 
-
+$(NOBUILD_TARGETS):
+	$(MAKE) TARGET=$@
 
 CLEAN_TARGETS = $(addprefix clean_,$(VALID_TARGETS) )
 TARGETS_CLEAN = $(addsuffix _clean,$(VALID_TARGETS) )
 
 ## clean             : clean up temporary / machine-generated files
 clean:
-	echo "Cleaning $(TARGET)"
-	rm -f $(CLEAN_ARTIFACTS)
-	rm -rf $(OBJECT_DIR)/$(TARGET)
-	echo "Cleaning $(TARGET) succeeded."
+	@echo "Cleaning $(TARGET)"
+	$(V0) rm -f $(CLEAN_ARTIFACTS)
+	$(V0) rm -rf $(OBJECT_DIR)/$(TARGET)
+	@echo "Cleaning $(TARGET) succeeded."
 
 ## clean_test        : clean up temporary / machine-generated files (tests)
+clean_test-%:
+	$(MAKE) clean_test
+
 clean_test:
-	cd src/test && $(MAKE) clean || true
+	$(V0) cd src/test && $(MAKE) clean || true
 
 ## clean_<TARGET>    : clean up one specific target
-$(CLEAN_TARGETS) :
-	$(MAKE) -j TARGET=$(subst clean_,,$@) clean
+$(CLEAN_TARGETS):
+	$(V0) $(MAKE) -j TARGET=$(subst clean_,,$@) clean
 
 ## <TARGET>_clean    : clean up one specific target (alias for above)
-$(TARGETS_CLEAN) :
-	$(MAKE) -j TARGET=$(subst _clean,,$@) clean
+$(TARGETS_CLEAN):
+	$(V0) $(MAKE) -j TARGET=$(subst _clean,,$@) clean
 
 ## clean_all         : clean all valid targets
-clean_all:$(CLEAN_TARGETS)
+clean_all: $(CLEAN_TARGETS)
 
 ## all_clean         : clean all valid targets (alias for above)
-all_clean:$(TARGETS_CLEAN)
+all_clean: $(TARGETS_CLEAN)
 
 
 flash_$(TARGET): $(TARGET_HEX)
-	stty -F $(SERIAL_DEVICE) raw speed 115200 -crtscts cs8 -parenb -cstopb -ixon
-	echo -n 'R' >$(SERIAL_DEVICE)
-	stm32flash -w $(TARGET_HEX) -v -g 0x0 -b 115200 $(SERIAL_DEVICE)
+	$(V0) stty -F $(SERIAL_DEVICE) raw speed 115200 -crtscts cs8 -parenb -cstopb -ixon
+	$(V0) echo -n 'R' >$(SERIAL_DEVICE)
+	$(V0) stm32flash -w $(TARGET_HEX) -v -g 0x0 -b 115200 $(SERIAL_DEVICE)
 
 ## flash             : flash firmware (.hex) onto flight controller
 flash: flash_$(TARGET)
 
 st-flash_$(TARGET): $(TARGET_BIN)
-	st-flash --reset write $< 0x08000000
+	$(V0) st-flash --reset write $< 0x08000000
 
 ## st-flash          : flash firmware (.bin) onto flight controller
 st-flash: st-flash_$(TARGET)
 
+ifneq ($(OPENOCD_COMMAND),)
+openocd-gdb: $(TARGET_ELF)
+	$(V0) $(OPENOCD_COMMAND) & $(CROSS_GDB) $(TARGET_ELF) -ex "target remote localhost:3333" -ex "load"
+endif
+
 binary:
-	$(MAKE) -j $(TARGET_BIN)
+	$(V0) $(MAKE) -j $(TARGET_BIN)
 
 hex:
-	$(MAKE) -j $(TARGET_HEX)
+	$(V0) $(MAKE) -j $(TARGET_HEX)
 
 unbrick_$(TARGET): $(TARGET_HEX)
-	stty -F $(SERIAL_DEVICE) raw speed 115200 -crtscts cs8 -parenb -cstopb -ixon
-	stm32flash -w $(TARGET_HEX) -v -g 0x0 -b 115200 $(SERIAL_DEVICE)
+	$(V0) stty -F $(SERIAL_DEVICE) raw speed 115200 -crtscts cs8 -parenb -cstopb -ixon
+	$(V0) stm32flash -w $(TARGET_HEX) -v -g 0x0 -b 115200 $(SERIAL_DEVICE)
 
 ## unbrick           : unbrick flight controller
 unbrick: unbrick_$(TARGET)
 
 ## cppcheck          : run static analysis on C source code
 cppcheck: $(CSOURCES)
-	$(CPPCHECK)
+	$(V0) $(CPPCHECK)
 
 cppcheck-result.xml: $(CSOURCES)
-	$(CPPCHECK) --xml-version=2 2> cppcheck-result.xml
+	$(V0) $(CPPCHECK) --xml-version=2 2> cppcheck-result.xml
+
+# mkdirs
+$(DL_DIR):
+	mkdir -p $@
+
+$(TOOLS_DIR):
+	mkdir -p $@
+
+$(BUILD_DIR):
+	mkdir -p $@
+
+## version           : print firmware version
+version:
+	@echo $(FC_VER)
 
 ## help              : print this help message and exit
-help: Makefile
+help: Makefile make/tools.mk
 	@echo ""
 	@echo "Makefile for the $(FORKNAME) firmware"
 	@echo ""
 	@echo "Usage:"
-	@echo "        make [TARGET=<target>] [OPTIONS=\"<options>\"]"
+	@echo "        make [V=<verbosity>] [TARGET=<target>] [OPTIONS=\"<options>\"]"
 	@echo "Or:"
-	@echo "        make <target> [OPTIONS=\"<options>\"]"
+	@echo "        make <target> [V=<verbosity>] [OPTIONS=\"<options>\"]"
 	@echo ""
 	@echo "Valid TARGET values are: $(VALID_TARGETS)"
 	@echo ""
-	@sed -n 's/^## //p' $<
+	@sed -n 's/^## //p' $?
 
 ## targets           : print a list of all valid target platforms (for consumption by scripts)
 targets:
-	@echo "Valid targets: $(VALID_TARGETS)"
-	@echo "Target:        $(TARGET)"
-	@echo "Base target:   $(BASE_TARGET)"
+	@echo "Valid targets:       $(VALID_TARGETS)"
+	@echo "Supported targets:   $(SUPPORTED_TARGETS)"
+	@echo "Unsupported targets: $(UNSUPPORTED_TARGETS)"
+	@echo "Target:              $(TARGET)"
+	@echo "Base target:         $(BASE_TARGET)"
+	@echo "targets-group-1:     $(GROUP_1_TARGETS)"
+	@echo "targets-group-2:     $(GROUP_2_TARGETS)"
+	@echo "targets-group-3:     $(GROUP_3_TARGETS)"
+	@echo "targets-group-4:     $(GROUP_4_TARGETS)"
+	@echo "targets-group-rest:  $(GROUP_OTHER_TARGETS)"
 
-## test              : run the cleanflight test suite
-test:
-	cd src/test && $(MAKE) test || true
+	@echo "targets-group-1:     $(words $(GROUP_1_TARGETS)) targets"
+	@echo "targets-group-2:     $(words $(GROUP_2_TARGETS)) targets"
+	@echo "targets-group-3:     $(words $(GROUP_3_TARGETS)) targets"
+	@echo "targets-group-4:     $(words $(GROUP_4_TARGETS)) targets"
+	@echo "targets-group-rest:  $(words $(GROUP_OTHER_TARGETS)) targets"
+	@echo "total in all groups  $(words $(SUPPORTED_TARGETS)) targets"
+
+## target-mcu        : print the MCU type of the target
+target-mcu:
+	@echo $(TARGET_MCU)
+
+## targets-by-mcu    : make all targets that have a MCU_TYPE mcu
+targets-by-mcu:
+	$(V1) for target in $(VALID_TARGETS); do \
+		TARGET_MCU_TYPE=$$($(MAKE) -s TARGET=$${target} target-mcu); \
+		if [ "$${TARGET_MCU_TYPE}" = "$${MCU_TYPE}" ]; then \
+			if [ "$${DO_BUILD}" = 1 ]; then \
+				echo "Building target $${target}..."; \
+				$(MAKE) TARGET=$${target}; \
+				if [ $$? -ne 0 ]; then \
+					echo "Building target $${target} failed, aborting."; \
+					exit 1; \
+				fi; \
+			else \
+				echo -n "$${target} "; \
+			fi; \
+		fi; \
+	done
+	@echo
+
+## targets-f3        : make all F3 targets
+targets-f3:
+	$(V1) $(MAKE) -s targets-by-mcu MCU_TYPE=STM32F3 DO_BUILD=1
+
+targets-f3-print:
+	$(V1) $(MAKE) -s targets-by-mcu MCU_TYPE=STM32F3
+
+## targets-f4        : make all F4 targets
+targets-f4:
+	$(V1) $(MAKE) -s targets-by-mcu MCU_TYPE=STM32F4 DO_BUILD=1
+
+targets-f4-print:
+	$(V1) $(MAKE) -s targets-by-mcu MCU_TYPE=STM32F4
+
+## targets-f7        : make all F7 targets
+targets-f7:
+	$(V1) $(MAKE) -s targets-by-mcu MCU_TYPE=STM32F7 DO_BUILD=1
+
+targets-f7-print:
+	$(V1) $(MAKE) -s targets-by-mcu MCU_TYPE=STM32F7
+
+## test              : run the Betaflight test suite
+## junittest         : run the Betaflight test suite, producing Junit XML result files.
+## test-representative: run a representative subset of the Betaflight test suite (i.e. run all tests, but run each expanded test only for one target)
+## test-all: run the Betaflight test suite including all per-target expanded tests
+test junittest test-all test-representative:
+	$(V0) cd src/test && $(MAKE) $@
+
+## test_help         : print the help message for the test suite (including a list of the available tests)
+test_help:
+	$(V0) cd src/test && $(MAKE) help
+
+## test_%            : run test 'test_%' from the test suite
+test_%:
+	$(V0) cd src/test && $(MAKE) $@
+
+
+check-target-independence:
+	$(V1) for test_target in $(VALID_TARGETS); do \
+		FOUND=$$(grep -rE "\W$${test_target}(\W.*)?$$" src/main | grep -vE "(//)|(/\*).*\W$${test_target}(\W.*)?$$" | grep -vE "^src/main/target"); \
+		if [ "$${FOUND}" != "" ]; then \
+			echo "Target dependencies for target '$${test_target}' found:"; \
+			echo "$${FOUND}"; \
+			exit 1; \
+		fi; \
+	done
+
+check-fastram-usage-correctness:
+	$(V1) NON_TRIVIALLY_INITIALIZED=$$(grep -Ern "\W?FAST_RAM_ZERO_INIT\W.*=.*" src/main/ | grep -Ev "=\s*(false|NULL|0(\.0*f?)?)\s*[,;]"); \
+	if [ "$${NON_TRIVIALLY_INITIALIZED}" != "" ]; then \
+		echo "Non-trivially initialized FAST_RAM_ZERO_INIT variables found, use FAST_RAM instead:"; \
+		echo "$${NON_TRIVIALLY_INITIALIZED}"; \
+		exit 1; \
+	fi; \
+	TRIVIALLY_INITIALIZED=$$(grep -Ern "\W?FAST_RAM\W.*;" src/main/ | grep -v "="); \
+	EXPLICITLY_TRIVIALLY_INITIALIZED=$$(grep -Ern "\W?FAST_RAM\W.*;" src/main/ | grep -E "=\s*(false|NULL|0(\.0*f?)?)\s*[,;]"); \
+	if [ "$${TRIVIALLY_INITIALIZED}$${EXPLICITLY_TRIVIALLY_INITIALIZED}" != "" ]; then \
+		echo "Trivially initialized FAST_RAM variables found, use FAST_RAM_ZERO_INIT instead to save FLASH:"; \
+		echo "$${TRIVIALLY_INITIALIZED}\n$${EXPLICITLY_TRIVIALLY_INITIALIZED}"; \
+		exit 1; \
+	fi
+
+check-platform-included:
+	$(V1) PLATFORM_NOT_INCLUDED=$$(find src/main -type d -name target -prune -o -type f -name \*.c -exec grep -L "^#include \"platform.h\"" {} \;); \
+	if [ "$$(echo $${PLATFORM_NOT_INCLUDED} | grep -v -e '^$$' | wc -l)" -ne 0 ]; then \
+		echo "The following compilation units do not include the required target specific configuration provided by 'platform.h':"; \
+		echo "$${PLATFORM_NOT_INCLUDED}"; \
+		exit 1; \
+	fi
 
 # rebuild everything when makefile changes
-$(TARGET_OBJS) : Makefile
+$(TARGET_OBJS): Makefile $(TARGET_DIR)/target.mk $(wildcard make/*)
+
 
 # include auto-generated dependencies
 -include $(TARGET_DEPS)

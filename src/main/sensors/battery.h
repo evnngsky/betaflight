@@ -1,83 +1,114 @@
 /*
- * This file is part of Cleanflight.
+ * This file is part of Cleanflight and Betaflight.
  *
- * Cleanflight is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Cleanflight and Betaflight are free software. You can redistribute
+ * this software and/or modify this software under the terms of the
+ * GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option)
+ * any later version.
  *
- * Cleanflight is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Cleanflight and Betaflight are distributed in the hope that they
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied
+ * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this software.
+ *
+ * If not, see <http://www.gnu.org/licenses/>.
  */
 
 #pragma once
 
-#include "common/maths.h"
+#include "pg/pg.h"
 
-#ifndef VBAT_SCALE_DEFAULT
-#define VBAT_SCALE_DEFAULT 110
-#endif
-#define VBAT_RESDIVVAL_DEFAULT 10
-#define VBAT_RESDIVMULTIPLIER_DEFAULT 1
-#define VBAT_SCALE_MIN 0
-#define VBAT_SCALE_MAX 255
+#include "common/filter.h"
+#include "common/time.h"
+#include "sensors/current.h"
+#include "sensors/voltage.h"
 
-typedef enum {
-    CURRENT_SENSOR_NONE = 0,
-    CURRENT_SENSOR_ADC,
-    CURRENT_SENSOR_VIRTUAL,
-    CURRENT_SENSOR_MAX = CURRENT_SENSOR_VIRTUAL
-} currentSensor_e;
+#define VBAT_CELL_VOTAGE_RANGE_MIN 100
+#define VBAT_CELL_VOTAGE_RANGE_MAX 500
+
+#define MAX_AUTO_DETECT_CELL_COUNT 8
+
+#define GET_BATTERY_LPF_FREQUENCY(period) (1 / (period / 10.0f))
+
+enum {
+    AUTO_PROFILE_CELL_COUNT_STAY = 0, // Stay on this profile irrespective of the detected cell count. Use this profile if no other profile matches (default, i.e. auto profile switching is off)
+    AUTO_PROFILE_CELL_COUNT_CHANGE = -1, // Always switch to a profile with matching cell count if there is one
+};
 
 typedef struct batteryConfig_s {
-    uint8_t vbatscale;                      // adjust this to match battery voltage to reported value
-    uint8_t vbatresdivval;                  // resistor divider R2 (default NAZE 10(K))
-    uint8_t vbatresdivmultiplier;           // multiplier for scale (e.g. 2.5:1 ratio with multiplier of 4 can use '100' instead of '25' in ratio) to get better precision
-    uint8_t vbatmaxcellvoltage;             // maximum voltage per cell, used for auto-detecting battery voltage in 0.1V units, default is 43 (4.3V)
-    uint8_t vbatmincellvoltage;             // minimum voltage per cell, this triggers battery critical alarm, in 0.1V units, default is 33 (3.3V)
-    uint8_t vbatwarningcellvoltage;         // warning voltage per cell, this triggers battery warning alarm, in 0.1V units, default is 35 (3.5V)
+    // voltage
+    uint16_t vbatmaxcellvoltage;            // maximum voltage per cell, used for auto-detecting battery voltage in 0.01V units, default is 430 (4.30V)
+    uint16_t vbatmincellvoltage;            // minimum voltage per cell, this triggers battery critical alarm, in 0.01V units, default is 330 (3.30V)
+    uint16_t vbatwarningcellvoltage;        // warning voltage per cell, this triggers battery warning alarm, in 0.01V units, default is 350 (3.50V)
+    uint16_t vbatnotpresentcellvoltage;     // Between vbatmaxcellvoltage and 2*this is considered to be USB powered. Below this it is notpresent
+    uint8_t lvcPercentage;                  // Percentage of throttle when lvc is triggered
+    voltageMeterSource_e voltageMeterSource; // source of battery voltage meter used, either ADC or ESC
+
+    // current
+    currentMeterSource_e currentMeterSource; // source of battery current meter used, either ADC, Virtual or ESC
+    uint16_t batteryCapacity;               // mAh
+
+    // warnings / alerts
+    bool useVBatAlerts;                     // Issue alerts based on VBat readings
+    bool useConsumptionAlerts;              // Issue alerts based on total power consumption
+    uint8_t consumptionWarningPercentage;   // Percentage of remaining capacity that should trigger a battery warning
     uint8_t vbathysteresis;                 // hysteresis for alarm, default 1 = 0.1V
 
-    int16_t currentMeterScale;             // scale the current sensor output voltage to milliamps. Value in 1/10th mV/A
-    uint16_t currentMeterOffset;            // offset of the current sensor in millivolt steps
-    currentSensor_e  currentMeterType;      // type of current meter used, either ADC or virtual
-
-    // FIXME this doesn't belong in here since it's a concern of MSP, not of the battery code.
-    uint8_t multiwiiCurrentMeterOutput;     // if set to 1 output the amperage in milliamp steps instead of 0.01A steps via msp
-    uint16_t batteryCapacity;               // mAh
+    uint16_t vbatfullcellvoltage;           // Cell voltage at which the battery is deemed to be "full" 0.01V units, default is 410 (4.1V)
+    
+    uint8_t forceBatteryCellCount;          // Number of cells in battery, used for overwriting auto-detected cell count if someone has issues with it.
+    uint8_t vbatLpfPeriod;                  // Period of the cutoff frequency for the Vbat filter (in 0.1 s)
+    uint8_t ibatLpfPeriod;                  // Period of the cutoff frequency for the Ibat filter (in 0.1 s)
 } batteryConfig_t;
+
+PG_DECLARE(batteryConfig_t, batteryConfig);
+
+typedef struct lowVoltageCutoff_s {
+    bool enabled;
+    uint8_t percentage;
+    timeUs_t startTime;
+} lowVoltageCutoff_t;
 
 typedef enum {
     BATTERY_OK = 0,
     BATTERY_WARNING,
     BATTERY_CRITICAL,
-    BATTERY_NOT_PRESENT
+    BATTERY_NOT_PRESENT,
+    BATTERY_INIT
 } batteryState_e;
 
-extern uint16_t vbat;
-extern uint16_t vbatRaw;
-extern uint16_t vbatLatestADC;
-extern uint8_t batteryCellCount;
-extern uint16_t batteryWarningVoltage;
-extern uint16_t amperageLatestADC;
-extern int32_t amperage;
-extern int32_t mAhDrawn;
+void batteryInit(void);
+void batteryUpdateVoltage(timeUs_t currentTimeUs);
+void batteryUpdatePresence(void);
 
 batteryState_e getBatteryState(void);
+batteryState_e getVoltageState(void);
+batteryState_e getConsumptionState(void);
 const  char * getBatteryStateString(void);
-void updateBattery(void);
-void batteryInit(batteryConfig_t *initialBatteryConfig);
-batteryConfig_t *batteryConfig;
+
+void batteryUpdateStates(timeUs_t currentTimeUs);
+void batteryUpdateAlarms(void);
 
 struct rxConfig_s;
-void updateCurrentMeter(int32_t lastUpdateAt, struct rxConfig_s *rxConfig, uint16_t deadband3d_throttle);
-int32_t currentMeterToCentiamps(uint16_t src);
 
-fix12_t calculateVbatPidCompensation(void);
-uint8_t calculateBatteryPercentage(void);
-uint8_t calculateBatteryCapacityRemainingPercentage(void);
+float calculateVbatPidCompensation(void);
+uint8_t calculateBatteryPercentageRemaining(void);
+bool isBatteryVoltageConfigured(void);
+uint16_t getBatteryVoltage(void);
+uint16_t getLegacyBatteryVoltage(void);
+uint16_t getBatteryVoltageLatest(void);
+uint8_t getBatteryCellCount(void);
+uint16_t getBatteryAverageCellVoltage(void);
+
+bool isAmperageConfigured(void);
+int32_t getAmperage(void);
+int32_t getAmperageLatest(void);
+int32_t getMAhDrawn(void);
+
+void batteryUpdateCurrentMeter(timeUs_t currentTimeUs);
+
+const lowVoltageCutoff_t *getLowVoltageCutoff(void);

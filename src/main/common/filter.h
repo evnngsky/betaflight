@@ -1,61 +1,85 @@
 /*
- * This file is part of Cleanflight.
+ * This file is part of Cleanflight and Betaflight.
  *
- * Cleanflight is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Cleanflight and Betaflight are free software. You can redistribute
+ * this software and/or modify this software under the terms of the
+ * GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option)
+ * any later version.
  *
- * Cleanflight is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Cleanflight and Betaflight are distributed in the hope that they
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied
+ * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this software.
+ *
+ * If not, see <http://www.gnu.org/licenses/>.
  */
 
-#define MAX_DENOISE_WINDOW_SIZE 120
+#pragma once
+#include <stdbool.h>
+
+struct filter_s;
+typedef struct filter_s filter_t;
 
 typedef struct pt1Filter_s {
     float state;
-    float RC;
-    float dT;
+    float k;
 } pt1Filter_t;
+
+typedef struct slewFilter_s {
+    float state;
+    float slewLimit;
+    float threshold;
+} slewFilter_t;
 
 /* this holds the data required to update samples thru a filter */
 typedef struct biquadFilter_s {
     float b0, b1, b2, a1, a2;
-    float d1, d2;
+    float x1, x2, y1, y2;
 } biquadFilter_t;
 
-typedef struct firFilterState_s {
-    int filledCount;
-    int targetCount;
-    int index;
+typedef struct laggedMovingAverage_s {
+    uint16_t movingWindowIndex;
+    uint16_t windowSize;
     float movingSum;
-    float state[MAX_DENOISE_WINDOW_SIZE];
-} firFilterState_t;
+    float *buf;
+    bool primed;
+} laggedMovingAverage_t;
 
 typedef enum {
     FILTER_PT1 = 0,
     FILTER_BIQUAD,
-    FILTER_FIR
-} filterType_e;
+} lowpassFilterType_e;
 
 typedef enum {
-    FILTER_LPF,
-    FILTER_NOTCH
+    FILTER_LPF,    // 2nd order Butterworth section
+    FILTER_NOTCH,
+    FILTER_BPF,
 } biquadFilterType_e;
+
+typedef float (*filterApplyFnPtr)(filter_t *filter, float input);
+
+float nullFilterApply(filter_t *filter, float input);
 
 void biquadFilterInitLPF(biquadFilter_t *filter, float filterFreq, uint32_t refreshRate);
 void biquadFilterInit(biquadFilter_t *filter, float filterFreq, uint32_t refreshRate, float Q, biquadFilterType_e filterType);
+void biquadFilterUpdate(biquadFilter_t *filter, float filterFreq, uint32_t refreshRate, float Q, biquadFilterType_e filterType);
+void biquadFilterUpdateLPF(biquadFilter_t *filter, float filterFreq, uint32_t refreshRate);
+
+float biquadFilterApplyDF1(biquadFilter_t *filter, float input);
 float biquadFilterApply(biquadFilter_t *filter, float input);
-float filterGetNotchQ(uint16_t centerFreq, uint16_t cutoff);
+float filterGetNotchQ(float centerFreq, float cutoffFreq);
 
-void pt1FilterInit(pt1Filter_t *filter, uint8_t f_cut, float dT);
+void laggedMovingAverageInit(laggedMovingAverage_t *filter, uint16_t windowSize, float *buf);
+float laggedMovingAverageUpdate(laggedMovingAverage_t *filter, float input);
+
+float pt1FilterGain(float f_cut, float dT);
+void pt1FilterInit(pt1Filter_t *filter, float k);
+void pt1FilterUpdateCutoff(pt1Filter_t *filter, float k);
 float pt1FilterApply(pt1Filter_t *filter, float input);
-float pt1FilterApply4(pt1Filter_t *filter, float input, uint8_t f_cut, float dT);
-void initFirFilter(firFilterState_t *filter, uint8_t gyroSoftLpfHz, uint16_t targetLooptime);
-float firFilterUpdate(firFilterState_t *filter, float input);
 
+void slewFilterInit(slewFilter_t *filter, float slewLimit, float threshold);
+float slewFilterApply(slewFilter_t *filter, float input);

@@ -19,6 +19,8 @@
   ******************************************************************************
   */
 
+#include "platform.h"
+
 #include "usbd_usr.h"
 #include "usbd_ioreq.h"
 
@@ -29,7 +31,7 @@ USBD_Usr_cb_TypeDef USR_cb =
   USBD_USR_DeviceConfigured,
   USBD_USR_DeviceSuspended,
   USBD_USR_DeviceResumed,
- 
+
   USBD_USR_DeviceConnected,
   USBD_USR_DeviceDisconnected,
 };
@@ -42,7 +44,7 @@ USBD_Usr_cb_TypeDef USR_cb =
 * @retval None
 */
 void USBD_USR_Init(void)
-{  
+{
 
 }
 
@@ -122,5 +124,3 @@ void USBD_USR_DeviceResumed(void)
 {
   /* Users can do their application actions here for the USB-Reset */
 }
-
-

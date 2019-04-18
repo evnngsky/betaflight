@@ -1,18 +1,21 @@
 /*
- * This file is part of Cleanflight.
+ * This file is part of Cleanflight and Betaflight.
  *
- * Cleanflight is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Cleanflight and Betaflight are free software. You can redistribute
+ * this software and/or modify this software under the terms of the
+ * GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option)
+ * any later version.
  *
- * Cleanflight is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Cleanflight and Betaflight are distributed in the hope that they
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied
+ * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this software.
+ *
+ * If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <stdbool.h>
@@ -21,28 +24,58 @@
 #include <string.h>
 #include <stdarg.h>
 
-#include <platform.h>
+#include "platform.h"
 
-#include <build_config.h>
+#ifdef USE_TRANSPONDER
+#include "build/build_config.h"
 
+#include "config/config_reset.h"
+#include "pg/pg.h"
+#include "pg/pg_ids.h"
+
+#include "drivers/timer.h"
 #include "drivers/transponder_ir.h"
 #include "drivers/system.h"
-
 #include "drivers/usb_io.h"
 
+#include "fc/config.h"
+
 #include "io/transponder_ir.h"
-#include "config/config.h"
+
+PG_REGISTER_WITH_RESET_FN(transponderConfig_t, transponderConfig, PG_TRANSPONDER_CONFIG, 0);
+
+void pgResetFn_transponderConfig(transponderConfig_t *transponderConfig)
+{
+    RESET_CONFIG_2(transponderConfig_t, transponderConfig,
+        .provider = TRANSPONDER_ILAP,
+        .reserved = 0,
+        .data = { 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0x0, 0x0, 0x0 }, // Note, this is NOT a valid transponder code, it's just for testing production hardware
+        .ioTag = IO_TAG_NONE
+    );
+    for (unsigned i = 0; i < TIMER_CHANNEL_COUNT; i++) {
+        if (TIMER_HARDWARE[i].usageFlags & TIM_USE_TRANSPONDER) {
+            transponderConfig->ioTag = TIMER_HARDWARE[i].tag;
+            break;
+        }
+    }
+}
 
 static bool transponderInitialised = false;
 static bool transponderRepeat = false;
 
 // timers
-static uint32_t nextUpdateAt = 0;
+static timeUs_t nextUpdateAtUs = 0;
 
 #define JITTER_DURATION_COUNT (sizeof(jitterDurations) / sizeof(uint8_t))
 static uint8_t jitterDurations[] = {0,9,4,8,3,9,6,7,1,6,9,7,8,2,6};
 
-void updateTransponder(void)
+const transponderRequirement_t transponderRequirements[TRANSPONDER_PROVIDER_COUNT] = {
+    {TRANSPONDER_ILAP, TRANSPONDER_DATA_LENGTH_ILAP, TRANSPONDER_TRANSMIT_DELAY_ILAP, TRANSPONDER_TRANSMIT_JITTER_ILAP},
+    {TRANSPONDER_ARCITIMER, TRANSPONDER_DATA_LENGTH_ARCITIMER, TRANSPONDER_TRANSMIT_DELAY_ARCITIMER, TRANSPONDER_TRANSMIT_JITTER_ARCITIMER},
+    {TRANSPONDER_ERLT, TRANSPONDER_DATA_LENGTH_ERLT, TRANSPONDER_TRANSMIT_DELAY_ERLT, TRANSPONDER_TRANSMIT_JITTER_ERLT}
+};
+
+void transponderUpdate(timeUs_t currentTimeUs)
 {
     static uint32_t jitterIndex = 0;
 
@@ -50,46 +83,39 @@ void updateTransponder(void)
         return;
     }
 
-    uint32_t now = micros();
-
-    bool updateNow = (int32_t)(now - nextUpdateAt) >= 0L;
+    const bool updateNow = (timeDelta_t)(currentTimeUs - nextUpdateAtUs) >= 0L;
     if (!updateNow) {
         return;
     }
 
-    // TODO use a random number genenerator for random jitter?  The idea here is to avoid multiple transmitters transmitting at the same time.
-    uint32_t jitter = (1000 * jitterDurations[jitterIndex++]);
+    uint8_t provider = transponderConfig()->provider;
+
+    // TODO use a random number generator for random jitter?  The idea here is to avoid multiple transmitters transmitting at the same time.
+    uint32_t jitter = (transponderRequirements[provider - 1].transmitJitter / 10 * jitterDurations[jitterIndex++]);
     if (jitterIndex >= JITTER_DURATION_COUNT) {
         jitterIndex = 0;
     }
 
-    nextUpdateAt = now + 4500 + jitter;
+    nextUpdateAtUs = currentTimeUs + transponderRequirements[provider - 1].transmitDelay + jitter;
 
 #ifdef REDUCE_TRANSPONDER_CURRENT_DRAW_WHEN_USB_CABLE_PRESENT
     // reduce current draw when USB cable is plugged in by decreasing the transponder transmit rate.
     if (usbCableIsInserted()) {
-        nextUpdateAt = now + (1000 * 1000) / 10; // 10 hz.
+        nextUpdateAtUs = currentTimeUs + (1000 * 1000) / 10; // 10 hz.
     }
 #endif
 
     transponderIrTransmit();
 }
 
-void transponderInit(uint8_t* transponderData)
+void transponderInit(void)
 {
-    transponderInitialised = false;
-    transponderIrInit();
-    transponderIrUpdateData(transponderData);
-}
+    transponderInitialised = transponderIrInit(transponderConfig()->ioTag, transponderConfig()->provider);
+    if (!transponderInitialised) {
+        return;
+    }
 
-void transponderEnable(void)
-{
-    transponderInitialised = true;
-}
-
-void transponderDisable(void)
-{
-    transponderInitialised = false;
+    transponderIrUpdateData(transponderConfig()->data);
 }
 
 void transponderStopRepeating(void)
@@ -99,12 +125,20 @@ void transponderStopRepeating(void)
 
 void transponderStartRepeating(void)
 {
+    if (!transponderInitialised) {
+        return;
+    }
+
     transponderRepeat = true;
 }
 
-void transponderUpdateData(uint8_t* transponderData)
+void transponderUpdateData(void)
 {
-    transponderIrUpdateData(transponderData);
+    if (!transponderInitialised) {
+        return;
+    }
+
+    transponderIrUpdateData(transponderConfig()->data);
 }
 
 void transponderTransmitOnce(void) {
@@ -114,3 +148,4 @@ void transponderTransmitOnce(void) {
     }
     transponderIrTransmit();
 }
+#endif

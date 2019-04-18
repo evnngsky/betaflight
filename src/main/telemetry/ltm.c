@@ -1,18 +1,21 @@
 /*
- * This file is part of Cleanflight.
+ * This file is part of Cleanflight and Betaflight.
  *
- * Cleanflight is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Cleanflight and Betaflight are free software. You can redistribute
+ * this software and/or modify this software under the terms of the
+ * GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option)
+ * any later version.
  *
- * Cleanflight is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Cleanflight and Betaflight are distributed in the hope that they
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied
+ * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this software.
+ *
+ * If not, see <http://www.gnu.org/licenses/>.
  */
 
 /*
@@ -33,21 +36,22 @@
 
 #include "platform.h"
 
-#ifdef TELEMETRY
+#ifdef USE_TELEMETRY_LTM
 
-#include "build_config.h"
+#include "build/build_config.h"
 
 #include "common/maths.h"
 #include "common/axis.h"
 #include "common/color.h"
+#include "common/utils.h"
 
-#include "drivers/system.h"
+#include "drivers/time.h"
 #include "drivers/sensor.h"
-#include "drivers/accgyro.h"
-#include "drivers/gpio.h"
-#include "drivers/timer.h"
-#include "drivers/serial.h"
-#include "drivers/pwm_rx.h"
+#include "drivers/accgyro/accgyro.h"
+
+#include "fc/config.h"
+#include "fc/rc_controls.h"
+#include "fc/runtime_config.h"
 
 #include "sensors/sensors.h"
 #include "sensors/acceleration.h"
@@ -57,13 +61,12 @@
 #include "sensors/battery.h"
 
 #include "io/serial.h"
-#include "io/rc_controls.h"
 #include "io/gimbal.h"
 #include "io/gps.h"
 #include "io/ledstrip.h"
 #include "io/beeper.h"
-#include "io/osd.h"
-#include "io/vtx.h"
+
+#include "pg/rx.h"
 
 #include "rx/rx.h"
 
@@ -71,22 +74,17 @@
 #include "flight/pid.h"
 #include "flight/imu.h"
 #include "flight/failsafe.h"
-#include "flight/altitudehold.h"
-#include "flight/navigation.h"
+#include "flight/position.h"
 
 #include "telemetry/telemetry.h"
 #include "telemetry/ltm.h"
 
-#include "config/config.h"
-#include "config/runtime_config.h"
 
 #define TELEMETRY_LTM_INITIAL_PORT_MODE MODE_TX
 #define LTM_CYCLETIME   100
 
-extern uint16_t rssi;           // FIXME dependency on mw.c
 static serialPort_t *ltmPort;
 static serialPortConfig_t *portConfig;
-static telemetryConfig_t *telemetryConfig;
 static bool ltmEnabled;
 static portSharing_e ltmPortSharing;
 static uint8_t ltm_crc;
@@ -130,7 +128,7 @@ static void ltm_finalise(void)
  */
 static void ltm_gframe(void)
 {
-#if defined(GPS)
+#if defined(USE_GPS)
     uint8_t gps_fix_type = 0;
     int32_t ltm_alt;
 
@@ -139,23 +137,23 @@ static void ltm_gframe(void)
 
     if (!STATE(GPS_FIX))
         gps_fix_type = 1;
-    else if (GPS_numSat < 5)
+    else if (gpsSol.numSat < 5)
         gps_fix_type = 2;
     else
         gps_fix_type = 3;
 
     ltm_initialise_packet('G');
-    ltm_serialise_32(GPS_coord[LAT]);
-    ltm_serialise_32(GPS_coord[LON]);
-    ltm_serialise_8((uint8_t)(GPS_speed / 100));
+    ltm_serialise_32(gpsSol.llh.lat);
+    ltm_serialise_32(gpsSol.llh.lon);
+    ltm_serialise_8((uint8_t)(gpsSol.groundSpeed / 100));
 
-#if defined(BARO) || defined(SONAR)
-    ltm_alt = (sensors(SENSOR_SONAR) || sensors(SENSOR_BARO)) ? altitudeHoldGetEstimatedAltitude() : GPS_altitude * 100;
+#if defined(USE_BARO) || defined(USE_RANGEFINDER)
+    ltm_alt = (sensors(SENSOR_RANGEFINDER) || sensors(SENSOR_BARO)) ? getEstimatedAltitudeCm() : gpsSol.llh.altCm;
 #else
-    ltm_alt = GPS_altitude * 100;
+    ltm_alt = gpsSol.llh.altCm;
 #endif
     ltm_serialise_32(ltm_alt);
-    ltm_serialise_8((GPS_numSat << 2) | gps_fix_type);
+    ltm_serialise_8((gpsSol.numSat << 2) | gps_fix_type);
     ltm_finalise();
 #endif
 }
@@ -177,14 +175,8 @@ static void ltm_sframe(void)
     uint8_t lt_statemode;
     if (FLIGHT_MODE(PASSTHRU_MODE))
         lt_flightmode = 0;
-    else if (FLIGHT_MODE(GPS_HOME_MODE))
-        lt_flightmode = 13;
-    else if (FLIGHT_MODE(GPS_HOLD_MODE))
-        lt_flightmode = 9;
     else if (FLIGHT_MODE(HEADFREE_MODE))
         lt_flightmode = 4;
-    else if (FLIGHT_MODE(BARO_MODE))
-        lt_flightmode = 8;
     else if (FLIGHT_MODE(ANGLE_MODE))
         lt_flightmode = 2;
     else if (FLIGHT_MODE(HORIZON_MODE))
@@ -196,9 +188,9 @@ static void ltm_sframe(void)
     if (failsafeIsActive())
         lt_statemode |= 2;
     ltm_initialise_packet('S');
-    ltm_serialise_16(vbat * 100);    //vbat converted to mv
+    ltm_serialise_16(getBatteryVoltage() * 10);    //vbat converted to mV
     ltm_serialise_16(0);             //  current, not implemented
-    ltm_serialise_8((uint8_t)((rssi * 254) / 1023));        // scaled RSSI (uchar)
+    ltm_serialise_8(constrain(scaleRange(getRssi(), 0, RSSI_MAX_VALUE, 0, 255), 0, 255));        // scaled RSSI (uchar)
     ltm_serialise_8(0);              // no airspeed
     ltm_serialise_8((lt_flightmode << 2) | lt_statemode);
     ltm_finalise();
@@ -208,7 +200,7 @@ static void ltm_sframe(void)
  * Attitude A-frame - 10 Hz at > 2400 baud
  *  PITCH ROLL HEADING
  */
-static void ltm_aframe()
+static void ltm_aframe(void)
 {
     ltm_initialise_packet('A');
     ltm_serialise_16(DECIDEGREES_TO_DEGREES(attitude.values.pitch));
@@ -222,10 +214,10 @@ static void ltm_aframe()
  *  This frame will be ignored by Ghettostation, but processed by GhettOSD if it is used as standalone onboard OSD
  *  home pos, home alt, direction to home
  */
-static void ltm_oframe()
+static void ltm_oframe(void)
 {
     ltm_initialise_packet('O');
-#if defined(GPS)
+#if defined(USE_GPS)
     ltm_serialise_32(GPS_home[LAT]);
     ltm_serialise_32(GPS_home[LON]);
 #else
@@ -274,9 +266,8 @@ void freeLtmTelemetryPort(void)
     ltmEnabled = false;
 }
 
-void initLtmTelemetry(telemetryConfig_t *initialTelemetryConfig)
+void initLtmTelemetry(void)
 {
-    telemetryConfig = initialTelemetryConfig;
     portConfig = findSerialPortConfig(FUNCTION_TELEMETRY_LTM);
     ltmPortSharing = determinePortSharing(portConfig, FUNCTION_TELEMETRY_LTM);
 }
@@ -290,7 +281,7 @@ void configureLtmTelemetryPort(void)
     if (baudRateIndex == BAUD_AUTO) {
         baudRateIndex = BAUD_19200;
     }
-    ltmPort = openSerialPort(portConfig->identifier, FUNCTION_TELEMETRY_LTM, NULL, baudRates[baudRateIndex], TELEMETRY_LTM_INITIAL_PORT_MODE, SERIAL_NOT_INVERTED);
+    ltmPort = openSerialPort(portConfig->identifier, FUNCTION_TELEMETRY_LTM, NULL, NULL, baudRates[baudRateIndex], TELEMETRY_LTM_INITIAL_PORT_MODE, telemetryConfig()->telemetry_inverted ? SERIAL_INVERTED : SERIAL_NOT_INVERTED);
     if (!ltmPort)
         return;
     ltmEnabled = true;

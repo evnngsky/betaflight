@@ -1,115 +1,134 @@
 /*
- * This file is part of Cleanflight.
+ * This file is part of Cleanflight and Betaflight.
  *
- * Cleanflight is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Cleanflight and Betaflight are free software. You can redistribute
+ * this software and/or modify this software under the terms of the
+ * GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option)
+ * any later version.
  *
- * Cleanflight is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Cleanflight and Betaflight are distributed in the hope that they
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied
+ * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this software.
+ *
+ * If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <stdbool.h>
 #include <stdint.h>
 
-#include <platform.h>
+#include "platform.h"
 
-#include "build_config.h"
+#ifdef USE_TARGET_CONFIG
 
-#include "blackbox/blackbox_io.h"
-
-#include "common/color.h"
 #include "common/axis.h"
-#include "common/filter.h"
+#include "common/utils.h"
 
-#include "drivers/sensor.h"
-#include "drivers/accgyro.h"
-#include "drivers/system.h"
-#include "drivers/timer.h"
-#include "drivers/pwm_rx.h"
-#include "drivers/serial.h"
-#include "drivers/pwm_output.h"
 #include "drivers/io.h"
-#include "drivers/pwm_mapping.h"
 
-#include "sensors/sensors.h"
-#include "sensors/gyro.h"
-#include "sensors/acceleration.h"
-#include "sensors/barometer.h"
-#include "sensors/boardalignment.h"
-#include "sensors/battery.h"
+#include "fc/config.h"
+#include "fc/rc_controls.h"
+#include "fc/controlrate_profile.h"
 
-#include "io/beeper.h"
-#include "io/serial.h"
-#include "io/gimbal.h"
-#include "io/escservo.h"
-#include "io/rc_controls.h"
-#include "io/rc_curves.h"
-#include "io/ledstrip.h"
+#include "flight/failsafe.h"
+#include "flight/mixer.h"
+#include "flight/pid.h"
+
+#include "pg/rx.h"
 
 #include "rx/rx.h"
 
-#include "telemetry/telemetry.h"
+#include "sensors/acceleration.h"
+#include "sensors/compass.h"
+#include "sensors/gyro.h"
 
-#include "flight/mixer.h"
-#include "flight/pid.h"
-#include "flight/imu.h"
-#include "flight/failsafe.h"
-#include "flight/altitudehold.h"
-#include "flight/navigation.h"
+#include "pg/beeper_dev.h"
+#include "pg/flash.h"
 
-#include "config/runtime_config.h"
-#include "config/config.h"
+#include "hardware_revision.h"
 
-#include "config/config_profile.h"
-#include "config/config_master.h"
-
-#ifdef BEEBRAIN
-// alternative defaults settings for Beebrain target
-void targetConfiguration(master_t *config)
+void targetConfiguration(void)
 {
-    config->motor_pwm_rate = 4000;
-    config->failsafeConfig.failsafe_delay = 2;
-    config->failsafeConfig.failsafe_off_delay = 0;
+#ifdef BEEBRAIN
+    // alternative defaults settings for Beebrain target
+    motorConfigMutable()->dev.motorPwmRate = 4000;
+    failsafeConfigMutable()->failsafe_delay = 2;
+    failsafeConfigMutable()->failsafe_off_delay = 0;
 
-    config->escAndServoConfig.minthrottle = 1049;
+    motorConfigMutable()->minthrottle = 1049;
 
-    config->gyro_lpf = 1;
-    config->gyro_soft_lpf_hz = 100;
-    config->gyro_soft_notch_hz_1 = 0;
+    gyroDeviceConfigMutable()->extiTag = selectMPUIntExtiConfigByHardwareRevision();
+
+    gyroConfigMutable()->gyro_hardware_lpf = GYRO_HARDWARE_LPF_1KHZ_SAMPLE;
+    gyroConfigMutable()->gyro_soft_lpf_hz = 100;
+    gyroConfigMutable()->gyro_soft_notch_hz_1 = 0;
+    gyroConfigMutable()->gyro_soft_notch_hz_2 = 0;
 
     /*for (int channel = 0; channel < NON_AUX_CHANNEL_COUNT; channel++) {
-        config->rxConfig.channelRanges[channel].min = 1180;
-        config->rxConfig.channelRanges[channel].max = 1860;
+        rxChannelRangeConfigsMutable(channel)->min = 1180;
+        rxChannelRangeConfigsMutable(channel)->max = 1860;
     }*/
 
-    for (int profileId = 0; profileId < 2; profileId++) {
-        config->profile[profileId].pidProfile.P8[ROLL] = 55;
-        config->profile[profileId].pidProfile.I8[ROLL] = 50;
-        config->profile[profileId].pidProfile.D8[ROLL] = 25;
-        config->profile[profileId].pidProfile.P8[PITCH] = 65;
-        config->profile[profileId].pidProfile.I8[PITCH] = 60;
-        config->profile[profileId].pidProfile.D8[PITCH] = 28;
-        config->profile[profileId].pidProfile.P8[YAW] = 180;
-        config->profile[profileId].pidProfile.I8[YAW] = 45;
-        config->profile[profileId].pidProfile.P8[PIDLEVEL] = 50;
-        config->profile[profileId].pidProfile.D8[PIDLEVEL] = 50;
-        config->profile[profileId].pidProfile.levelSensitivity = 1.0f;
+    for (uint8_t pidProfileIndex = 0; pidProfileIndex < PID_PROFILE_COUNT; pidProfileIndex++) {
+        pidProfile_t *pidProfile = pidProfilesMutable(pidProfileIndex);
 
-        for (int rateProfileId = 0; rateProfileId < MAX_RATEPROFILES; rateProfileId++) {
-            config->profile[profileId].controlRateProfile[rateProfileId].rcRate8 = 110;
-            config->profile[profileId].controlRateProfile[rateProfileId].rcYawRate8 = 110;
-            config->profile[profileId].controlRateProfile[rateProfileId].rates[ROLL] = 80;
-            config->profile[profileId].controlRateProfile[rateProfileId].rates[PITCH] = 80;
-            config->profile[profileId].controlRateProfile[rateProfileId].rates[YAW] = 80;
+        pidProfile->pid[PID_ROLL].P = 60;
+        pidProfile->pid[PID_ROLL].I = 70;
+        pidProfile->pid[PID_ROLL].D = 17;
+        pidProfile->pid[PID_PITCH].P = 80;
+        pidProfile->pid[PID_PITCH].I = 90;
+        pidProfile->pid[PID_PITCH].D = 18;
+        pidProfile->pid[PID_YAW].P = 200;
+        pidProfile->pid[PID_YAW].I = 45;
+        pidProfile->pid[PID_LEVEL].P = 30;
+        pidProfile->pid[PID_LEVEL].D = 30;
 
-            config->profile[profileId].pidProfile.setpointRelaxRatio = 100;
-        }
+        pidProfile->pid[PID_PITCH].F = 200;
+        pidProfile->pid[PID_ROLL].F = 200;
+        pidProfile->feedForwardTransition = 50;
+    }
+
+    for (uint8_t rateProfileIndex = 0; rateProfileIndex < CONTROL_RATE_PROFILE_COUNT; rateProfileIndex++) {
+        controlRateConfig_t *controlRateConfig = controlRateProfilesMutable(rateProfileIndex);
+
+        controlRateConfig->rcRates[FD_ROLL] = 100;
+        controlRateConfig->rcRates[FD_PITCH] = 100;
+        controlRateConfig->rcRates[FD_YAW] = 110;
+        controlRateConfig->rcExpo[FD_ROLL] = 0;
+        controlRateConfig->rcExpo[FD_PITCH] = 0;
+        controlRateConfig->rates[FD_ROLL] = 77;
+        controlRateConfig->rates[FD_PITCH] = 77;
+        controlRateConfig->rates[FD_YAW] = 80;
+    }
+#endif
+
+#if !defined(AFROMINI) && !defined(BEEBRAIN)
+    if (hardwareRevision >= NAZE32_REV5) {
+        // naze rev4 and below used opendrain to PNP for buzzer. Rev5 and above use PP to NPN.
+        beeperDevConfigMutable()->isOpenDrain = false;
+        beeperDevConfigMutable()->isInverted = true;
+    } else {
+        beeperDevConfigMutable()->isOpenDrain = true;
+        beeperDevConfigMutable()->isInverted = false;
+        flashConfigMutable()->csTag = IO_TAG_NONE;
+    }
+#endif
+
+#ifdef MAG_INT_EXTI
+    if (hardwareRevision < NAZE32_REV5) {
+        compassConfigMutable()->interruptTag = IO_TAG(PB12);
+    }
+#endif
+}
+
+void targetValidateConfiguration(void)
+{
+    if (hardwareRevision < NAZE32_REV5 && accelerometerConfig()->acc_hardware == ACC_ADXL345) {
+        accelerometerConfigMutable()->acc_hardware = ACC_NONE;
     }
 }
 #endif

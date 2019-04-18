@@ -1,39 +1,47 @@
 /*
- * This file is part of Cleanflight.
+ * This file is part of Cleanflight and Betaflight.
  *
- * Cleanflight is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Cleanflight and Betaflight are free software. You can redistribute
+ * this software and/or modify this software under the terms of the
+ * GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option)
+ * any later version.
  *
- * Cleanflight is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Cleanflight and Betaflight are distributed in the hope that they
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied
+ * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this software.
+ *
+ * If not, see <http://www.gnu.org/licenses/>.
  */
 
 #pragma once
 
-#define VTX_BAND_MIN                            1
-#define VTX_BAND_MAX                            5
-#define VTX_CHANNEL_MIN                         1
-#define VTX_CHANNEL_MAX                         8
-#define MAX_CHANNEL_ACTIVATION_CONDITION_COUNT  10
+#include <stdint.h>
 
-typedef struct vtxChannelActivationCondition_s {
-    uint8_t auxChannelIndex;
-    uint8_t band;
-    uint8_t channel;
-    channelRange_t range;
-} vtxChannelActivationCondition_t;
+#include "platform.h"
+#include "common/time.h"
+#include "pg/pg.h"
+
+typedef enum {
+     VTX_LOW_POWER_DISARM_OFF = 0,
+     VTX_LOW_POWER_DISARM_ALWAYS,
+     VTX_LOW_POWER_DISARM_UNTIL_FIRST_ARM, // Set low power until arming for the first time
+} vtxLowerPowerDisarm_e;
+
+typedef struct vtxSettingsConfig_s {
+    uint8_t band;           // 1=A, 2=B, 3=E, 4=F(Airwaves/Fatshark), 5=Raceband
+    uint8_t channel;        // 1-8
+    uint8_t power;          // 0 = lowest
+    uint16_t freq;          // sets freq in MHz if band=0
+    uint16_t pitModeFreq;   // sets out-of-range pitmode frequency
+    uint8_t lowPowerDisarm; // min power while disarmed, from vtxLowerPowerDisarm_e
+} vtxSettingsConfig_t;
+
+PG_DECLARE(vtxSettingsConfig_t, vtxSettingsConfig);
 
 void vtxInit(void);
-void vtxIncrementBand(void);
-void vtxDecrementBand(void);
-void vtxIncrementChannel(void);
-void vtxDecrementChannel(void);
-void vtxUpdateActivatedChannel(void);
-
+void vtxUpdate(timeUs_t currentTimeUs);

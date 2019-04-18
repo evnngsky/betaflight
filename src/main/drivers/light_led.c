@@ -1,63 +1,56 @@
 /*
- * This file is part of Cleanflight.
+ * This file is part of Cleanflight and Betaflight.
  *
- * Cleanflight is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Cleanflight and Betaflight are free software. You can redistribute
+ * this software and/or modify this software under the terms of the
+ * GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option)
+ * any later version.
  *
- * Cleanflight is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Cleanflight and Betaflight are distributed in the hope that they
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied
+ * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this software.
+ *
+ * If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include "platform.h"
 
-#include "io.h"
+#include "pg/pg_ids.h"
+
+#include "drivers/io.h"
 #include "io_impl.h"
 
 #include "light_led.h"
 
-static const IO_t leds[] = {
-#ifdef LED0
-    DEFIO_IO(LED0),
-#else
-    DEFIO_IO(NONE),
-#endif
-#ifdef LED1
-    DEFIO_IO(LED1),
-#else
-    DEFIO_IO(NONE),
-#endif
-#ifdef LED2
-    DEFIO_IO(LED2),
-#else
-    DEFIO_IO(NONE),
-#endif
-#if defined(LED0_A) || defined(LED1_A) || defined(LED2_A)
-#ifdef LED0_A
-    DEFIO_IO(LED0_A),
-#else
-    DEFIO_IO(NONE),
-#endif
-#ifdef LED1_A
-    DEFIO_IO(LED1_A),
-#else
-    DEFIO_IO(NONE),
-#endif
-#ifdef LED2_A
-    DEFIO_IO(LED2_A),
-#else
-    DEFIO_IO(NONE),
-#endif
-#endif
-};
+PG_REGISTER_WITH_RESET_FN(statusLedConfig_t, statusLedConfig, PG_STATUS_LED_CONFIG, 0);
 
-uint8_t ledPolarity = 0
+static IO_t leds[STATUS_LED_NUMBER];
+static uint8_t ledInversion = 0;
+
+#ifndef LED0_PIN
+#define LED0_PIN NONE
+#endif
+
+#ifndef LED1_PIN
+#define LED1_PIN NONE
+#endif
+
+#ifndef LED2_PIN
+#define LED2_PIN NONE
+#endif
+
+void pgResetFn_statusLedConfig(statusLedConfig_t *statusLedConfig)
+{
+    statusLedConfig->ioTags[0] = IO_TAG(LED0_PIN);
+    statusLedConfig->ioTags[1] = IO_TAG(LED1_PIN);
+    statusLedConfig->ioTags[2] = IO_TAG(LED2_PIN);
+
+    statusLedConfig->inversion = 0
 #ifdef LED0_INVERTED
     | BIT(0)
 #endif
@@ -67,37 +60,19 @@ uint8_t ledPolarity = 0
 #ifdef LED2_INVERTED
     | BIT(2)
 #endif
-#ifdef LED0_A_INVERTED
-    | BIT(3)
-#endif
-#ifdef LED1_A_INVERTED
-    | BIT(4)
-#endif
-#ifdef LED2_A_INVERTED
-    | BIT(5)
-#endif
     ;
+}
 
-static uint8_t ledOffset = 0;
-
-void ledInit(bool alternative_led)
+void ledInit(const statusLedConfig_t *statusLedConfig)
 {
-#if defined(LED0_A) || defined(LED1_A) || defined(LED2_A)
-    if (alternative_led) {
-        ledOffset = LED_NUMBER;
-    }
-#else
-    UNUSED(alternative_led);
-#endif
-
-    LED0_OFF;
-    LED1_OFF;
-    LED2_OFF;
-
-    for (int i = 0; i < LED_NUMBER; i++) {
-        if (leds[i + ledOffset]) {
-            IOInit(leds[i + ledOffset], OWNER_LED, RESOURCE_OUTPUT, RESOURCE_INDEX(i));
-            IOConfigGPIO(leds[i + ledOffset], IOCFG_OUT_PP);
+    ledInversion = statusLedConfig->inversion;
+    for (int i = 0; i < STATUS_LED_NUMBER; i++) {
+        if (statusLedConfig->ioTags[i]) {
+            leds[i] = IOGetByTag(statusLedConfig->ioTags[i]);
+            IOInit(leds[i], OWNER_LED, RESOURCE_INDEX(i));
+            IOConfigGPIO(leds[i], IOCFG_OUT_PP);
+        } else {
+            leds[i] = IO_NONE;
         }
     }
 
@@ -108,11 +83,11 @@ void ledInit(bool alternative_led)
 
 void ledToggle(int led)
 {
-    IOToggle(leds[led + ledOffset]);
+    IOToggle(leds[led]);
 }
 
 void ledSet(int led, bool on)
 {
-    const bool inverted = (1 << (led + ledOffset)) & ledPolarity;
-    IOWrite(leds[led + ledOffset], on ? inverted : !inverted);
+    const bool inverted = (1 << (led)) & ledInversion;
+    IOWrite(leds[led], on ? inverted : !inverted);
 }

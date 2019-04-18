@@ -19,15 +19,20 @@
  ******************************************************************************
  */
 
+/* Includes ------------------------------------------------------------------*/
+
+#include "platform.h"
+
+#include "usbd_cdc_vcp.h"
+#include "stm32f4xx_conf.h"
+#include "stdbool.h"
+#include "drivers/time.h"
+
 #ifdef USB_OTG_HS_INTERNAL_DMA_ENABLED
 #pragma     data_alignment = 4
 #endif /* USB_OTG_HS_INTERNAL_DMA_ENABLED */
 
-/* Includes ------------------------------------------------------------------*/
-#include "usbd_cdc_vcp.h"
-#include "stm32f4xx_conf.h"
-#include "stdbool.h"
-#include "drivers/system.h"
+__ALIGN_BEGIN USB_OTG_CORE_HANDLE USB_OTG_dev __ALIGN_END;
 
 LINE_CODING g_lc;
 
@@ -37,21 +42,18 @@ __IO uint32_t bDeviceState = UNCONNECTED; /* USB device status */
 /* These are external variables imported from CDC core to be used for IN transfer management. */
 
 /* This is the buffer for data received from the MCU to APP (i.e. MCU TX, APP RX) */
-extern uint8_t APP_Rx_Buffer[]; 
+extern uint8_t APP_Rx_Buffer[];
 extern uint32_t APP_Rx_ptr_out;
-
 /* Increment this buffer position or roll it back to
  start address when writing received data
  in the buffer APP_Rx_Buffer. */
-extern uint32_t APP_Rx_ptr_in; 
-__IO uint32_t receiveLength = 0;
+extern uint32_t APP_Rx_ptr_in;
 
 /*
     APP TX is the circular buffer for data that is transmitted from the APP (host)
     to the USB device (flight controller).
 */
-#define APP_TX_DATA_SIZE      1024
-static uint8_t APP_Tx_Buffer[APP_TX_DATA_SIZE]; 
+static uint8_t APP_Tx_Buffer[APP_TX_DATA_SIZE];
 static uint32_t APP_Tx_ptr_out = 0;
 static uint32_t APP_Tx_ptr_in = 0;
 
@@ -59,8 +61,13 @@ static uint32_t APP_Tx_ptr_in = 0;
 static uint16_t VCP_Init(void);
 static uint16_t VCP_DeInit(void);
 static uint16_t VCP_Ctrl(uint32_t Cmd, uint8_t* Buf, uint32_t Len);
-static uint16_t VCP_DataTx(uint8_t* Buf, uint32_t Len);
+static uint16_t VCP_DataTx(const uint8_t* Buf, uint32_t Len);
 static uint16_t VCP_DataRx(uint8_t* Buf, uint32_t Len);
+static void (*ctrlLineStateCb)(void* context, uint16_t ctrlLineState);
+static void *ctrlLineStateCbContext;
+static void (*baudRateCb)(void *context, uint32_t baud);
+static void *baudRateCbContext;
+
 
 CDC_IF_Prop_TypeDef VCP_fops = {VCP_Init, VCP_DeInit, VCP_Ctrl, VCP_DataTx, VCP_DataRx };
 
@@ -74,6 +81,8 @@ CDC_IF_Prop_TypeDef VCP_fops = {VCP_Init, VCP_DeInit, VCP_Ctrl, VCP_DataTx, VCP_
 static uint16_t VCP_Init(void)
 {
     bDeviceState = CONFIGURED;
+    ctrlLineStateCb = NULL;
+    baudRateCb = NULL;
     return USBD_OK;
 }
 
@@ -107,13 +116,12 @@ void ust_cpy(LINE_CODING* plc2, const LINE_CODING* plc1)
  */
 static uint16_t VCP_Ctrl(uint32_t Cmd, uint8_t* Buf, uint32_t Len)
 {
-    (void)Len;
     LINE_CODING* plc = (LINE_CODING*)Buf;
 
     assert_param(Len>=sizeof(LINE_CODING));
 
     switch (Cmd) {
-       /* Not  needed for this driver, AT modem commands */  
+       /* Not  needed for this driver, AT modem commands */
       case SEND_ENCAPSULATED_COMMAND:
       case GET_ENCAPSULATED_RESPONSE:
          break;
@@ -127,18 +135,30 @@ static uint16_t VCP_Ctrl(uint32_t Cmd, uint8_t* Buf, uint32_t Len)
 
       //Note - hw flow control on UART 1-3 and 6 only
       case SET_LINE_CODING:
-         ust_cpy(&g_lc, plc);           //Copy into structure to save for later
+         // If a callback is provided, tell the upper driver of changes in baud rate
+         if (plc && (Len == sizeof (*plc))) {
+             if (baudRateCb) {
+                 baudRateCb(baudRateCbContext, plc->bitrate);
+             }
+             ust_cpy(&g_lc, plc);           //Copy into structure to save for later
+         }
          break;
 
 
       case GET_LINE_CODING:
-         ust_cpy(plc, &g_lc);
+         if (plc && (Len == sizeof (*plc))) {
+             ust_cpy(plc, &g_lc);
+         }
          break;
 
 
       case SET_CONTROL_LINE_STATE:
-         /* Not  needed for this driver */
-         //RSW - This tells how to set RTS and DTR
+         // If a callback is provided, tell the upper driver of changes in DTR/RTS state
+         if (plc && (Len == sizeof (uint16_t))) {
+             if (ctrlLineStateCb) {
+                 ctrlLineStateCb(ctrlLineStateCbContext, *((uint16_t *)Buf));
+             }
+         }
          break;
 
       case SEND_BREAK:
@@ -155,36 +175,51 @@ static uint16_t VCP_Ctrl(uint32_t Cmd, uint8_t* Buf, uint32_t Len)
 /*******************************************************************************
  * Function Name  : Send DATA .
  * Description    : send the data received from the STM32 to the PC through USB
- * Input          : None.
+ * Input          : buffer to send, and the length of the buffer.
  * Output         : None.
  * Return         : None.
  *******************************************************************************/
-uint32_t CDC_Send_DATA(uint8_t *ptrBuffer, uint8_t sendLength)
+uint32_t CDC_Send_DATA(const uint8_t *ptrBuffer, uint32_t sendLength)
 {
     VCP_DataTx(ptrBuffer, sendLength);
     return sendLength;
 }
 
+uint32_t CDC_Send_FreeBytes(void)
+{
+    /*
+        return the bytes free in the circular buffer
+
+        functionally equivalent to:
+        (APP_Rx_ptr_out > APP_Rx_ptr_in ? APP_Rx_ptr_out - APP_Rx_ptr_in : APP_RX_DATA_SIZE - APP_Rx_ptr_in + APP_Rx_ptr_in)
+        but without the impact of the condition check.
+    */
+    return ((APP_Rx_ptr_out - APP_Rx_ptr_in) + (-((int)(APP_Rx_ptr_out <= APP_Rx_ptr_in)) & APP_RX_DATA_SIZE)) - 1;
+}
+
 /**
  * @brief  VCP_DataTx
- *         CDC received data to be send over USB IN endpoint are managed in
- *         this function.
+ *         CDC data to be sent to the Host (app) over USB
  * @param  Buf: Buffer of data to be sent
  * @param  Len: Number of data to be sent (in bytes)
  * @retval Result of the operation: USBD_OK if all operations are OK else VCP_FAIL
  */
-static uint16_t VCP_DataTx(uint8_t* Buf, uint32_t Len)
+static uint16_t VCP_DataTx(const uint8_t* Buf, uint32_t Len)
 {
-    /* 
+    /*
         make sure that any paragraph end frame is not in play
         could just check for: USB_CDC_ZLP, but better to be safe
         and wait for any existing transmission to complete.
     */
-    while (USB_Tx_State);
-    
+    while (USB_Tx_State != 0);
+
     for (uint32_t i = 0; i < Len; i++) {
         APP_Rx_Buffer[APP_Rx_ptr_in] = Buf[i];
         APP_Rx_ptr_in = (APP_Rx_ptr_in + 1) % APP_RX_DATA_SIZE;
+
+        while (CDC_Send_FreeBytes() == 0) {
+            delay(1);
+        }
     }
 
     return USBD_OK;
@@ -205,14 +240,14 @@ uint32_t CDC_Receive_DATA(uint8_t* recvBuf, uint32_t len)
         recvBuf[count] = APP_Tx_Buffer[APP_Tx_ptr_out];
         APP_Tx_ptr_out = (APP_Tx_ptr_out + 1) % APP_TX_DATA_SIZE;
         count++;
-        receiveLength--;
     }
-
-    if (!receiveLength) {
-        receiveLength = APP_Tx_ptr_out != APP_Tx_ptr_in;
-    }
-
     return count;
+}
+
+uint32_t CDC_Receive_BytesAvailable(void)
+{
+    /* return the bytes available in the receive circular buffer */
+    return APP_Tx_ptr_out > APP_Tx_ptr_in ? APP_TX_DATA_SIZE - APP_Tx_ptr_out + APP_Tx_ptr_in : APP_Tx_ptr_in - APP_Tx_ptr_out;
 }
 
 /**
@@ -232,18 +267,14 @@ uint32_t CDC_Receive_DATA(uint8_t* recvBuf, uint32_t len)
  */
 static uint16_t VCP_DataRx(uint8_t* Buf, uint32_t Len)
 {
-    __disable_irq();
+    if (CDC_Receive_BytesAvailable() + Len > APP_TX_DATA_SIZE) {
+        return USBD_FAIL;
+    }
 
-    receiveLength += Len;
     for (uint32_t i = 0; i < Len; i++) {
         APP_Tx_Buffer[APP_Tx_ptr_in] = Buf[i];
         APP_Tx_ptr_in = (APP_Tx_ptr_in + 1) % APP_TX_DATA_SIZE;
     }
-
-    __enable_irq();
-
-    if(receiveLength > APP_TX_DATA_SIZE)
-        return USBD_FAIL;
 
     return USBD_OK;
 }
@@ -282,6 +313,32 @@ uint8_t usbIsConnected(void)
 uint32_t CDC_BaudRate(void)
 {
     return g_lc.bitrate;
+}
+
+/*******************************************************************************
+ * Function Name  : CDC_SetBaudRateCb
+ * Description    : Set a callback to call when baud rate changes
+ * Input          : callback function and context.
+ * Output         : None.
+ * Return         : None.
+ *******************************************************************************/
+void CDC_SetBaudRateCb(void (*cb)(void *context, uint32_t baud), void *context)
+{
+    baudRateCbContext = context;
+    baudRateCb = cb;
+}
+
+/*******************************************************************************
+ * Function Name  : CDC_SetCtrlLineStateCb
+ * Description    : Set a callback to call when control line state changes
+ * Input          : callback function and context.
+ * Output         : None.
+ * Return         : None.
+ *******************************************************************************/
+void CDC_SetCtrlLineStateCb(void (*cb)(void *context, uint16_t ctrlLineState), void *context)
+{
+    ctrlLineStateCbContext = context;
+    ctrlLineStateCb = cb;
 }
 
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/

@@ -26,11 +26,14 @@
  */
 
 /* Includes ------------------------------------------------------------------*/
+
+#include "platform.h"
+
 #include "usb_lib.h"
 #include "usb_desc.h"
 
 /* USB Standard Device Descriptor */
-const uint8_t Virtual_Com_Port_DeviceDescriptor[] = { 
+const uint8_t Virtual_Com_Port_DeviceDescriptor[] = {
     0x12, /* bLength */
     USB_DEVICE_DESCRIPTOR_TYPE, /* bDescriptorType */
     0x00, 0x02, /* bcdUSB = 2.00 */

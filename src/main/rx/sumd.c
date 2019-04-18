@@ -1,18 +1,21 @@
 /*
- * This file is part of Cleanflight.
+ * This file is part of Cleanflight and Betaflight.
  *
- * Cleanflight is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Cleanflight and Betaflight are free software. You can redistribute
+ * this software and/or modify this software under the terms of the
+ * GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option)
+ * any later version.
  *
- * Cleanflight is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Cleanflight and Betaflight are distributed in the hope that they
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied
+ * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this software.
+ *
+ * If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <stdbool.h>
@@ -21,91 +24,49 @@
 
 #include "platform.h"
 
-#include "build_config.h"
+#ifdef USE_SERIALRX_SUMD
 
-#include "drivers/system.h"
+#include "common/crc.h"
+#include "common/utils.h"
+#include "common/maths.h"
 
-#include "drivers/serial.h"
-#include "drivers/serial_uart.h"
+#include "drivers/time.h"
+
 #include "io/serial.h"
 
-#ifdef TELEMETRY
+#ifdef USE_TELEMETRY
 #include "telemetry/telemetry.h"
 #endif
+
+#include "pg/rx.h"
 
 #include "rx/rx.h"
 #include "rx/sumd.h"
 
 // driver for SUMD receiver using UART2
 
-// FIXME test support for more than 8 channels, should probably work up to 12 channels
+// Support for SUMD and SUMD V3
+// Tested with 16 channels, SUMD supports up to 16(*), SUMD V3 up to 32 (MZ-32) channels, but limit to MAX_SUPPORTED_RC_CHANNEL_COUNT (currently 8, BF 3.4)
+// * According to the original SUMD V1 documentation, SUMD V1 already supports up to 32 Channels?!?
 
 #define SUMD_SYNCBYTE 0xA8
-#define SUMD_MAX_CHANNEL 16
+#define SUMD_MAX_CHANNEL 32
 #define SUMD_BUFFSIZE (SUMD_MAX_CHANNEL * 2 + 5) // 6 channels + 5 = 17 bytes for 6 channels
 
 #define SUMD_BAUDRATE 115200
 
 static bool sumdFrameDone = false;
-static uint16_t sumdChannels[SUMD_MAX_CHANNEL];
+static uint16_t sumdChannels[MAX_SUPPORTED_RC_CHANNEL_COUNT];
 static uint16_t crc;
-
-static void sumdDataReceive(uint16_t c);
-static uint16_t sumdReadRawRC(rxRuntimeConfig_t *rxRuntimeConfig, uint8_t chan);
-
-bool sumdInit(rxConfig_t *rxConfig, rxRuntimeConfig_t *rxRuntimeConfig, rcReadRawDataPtr *callback)
-{
-    UNUSED(rxConfig);
-
-    if (callback)
-        *callback = sumdReadRawRC;
-
-    rxRuntimeConfig->channelCount = SUMD_MAX_CHANNEL;
-
-    serialPortConfig_t *portConfig = findSerialPortConfig(FUNCTION_RX_SERIAL);
-    if (!portConfig) {
-        return false;
-    }
-
-#ifdef TELEMETRY
-    bool portShared = telemetryCheckRxPortShared(portConfig);
-#else
-    bool portShared = false;
-#endif
-
-    serialPort_t *sumdPort = openSerialPort(portConfig->identifier, FUNCTION_RX_SERIAL, sumdDataReceive, SUMD_BAUDRATE, portShared ? MODE_RXTX : MODE_RX, SERIAL_NOT_INVERTED);
-
-#ifdef TELEMETRY
-    if (portShared) {
-        telemetrySharedPort = sumdPort;
-    }
-#endif
-
-    return sumdPort != NULL;
-}
-
-#define CRC_POLYNOME 0x1021
-
-// CRC calculation, adds a 8 bit unsigned to 16 bit crc
-static void CRC16(uint8_t value)
-{
-    uint8_t i;
-
-    crc = crc ^ (int16_t)value << 8;
-    for (i = 0; i < 8; i++) {
-    if (crc & 0x8000)
-        crc = (crc << 1) ^ CRC_POLYNOME;
-    else
-        crc = (crc << 1);
-    }
-}
 
 static uint8_t sumd[SUMD_BUFFSIZE] = { 0, };
 static uint8_t sumdChannelCount;
 
 // Receive ISR callback
-static void sumdDataReceive(uint16_t c)
+static void sumdDataReceive(uint16_t c, void *data)
 {
+    UNUSED(data);
+
     uint32_t sumdTime;
     static uint32_t sumdTimeLast;
     static uint8_t sumdIndex;
@@ -130,7 +91,7 @@ static void sumdDataReceive(uint16_t c)
         sumd[sumdIndex] = (uint8_t)c;
     sumdIndex++;
     if (sumdIndex < sumdChannelCount * 2 + 4)
-        CRC16((uint8_t)c);
+        crc = crc16_ccitt(crc, (uint8_t)c);
     else
         if (sumdIndex == sumdChannelCount * 2 + 5) {
             sumdIndex = 0;
@@ -143,14 +104,15 @@ static void sumdDataReceive(uint16_t c)
 #define SUMD_BYTES_PER_CHANNEL 2
 
 
-#define SUMD_FRAME_STATE_OK 0x01
+#define SUMDV1_FRAME_STATE_OK 0x01
+#define SUMDV3_FRAME_STATE_OK 0x03
 #define SUMD_FRAME_STATE_FAILSAFE 0x81
 
-uint8_t sumdFrameStatus(void)
+static uint8_t sumdFrameStatus(rxRuntimeConfig_t *rxRuntimeConfig)
 {
-    uint8_t channelIndex;
+    UNUSED(rxRuntimeConfig);
 
-    uint8_t frameStatus = SERIAL_RX_FRAME_PENDING;
+    uint8_t frameStatus = RX_FRAME_PENDING;
 
     if (!sumdFrameDone) {
         return frameStatus;
@@ -165,19 +127,19 @@ uint8_t sumdFrameStatus(void)
 
     switch (sumd[1]) {
         case SUMD_FRAME_STATE_FAILSAFE:
-            frameStatus = SERIAL_RX_FRAME_COMPLETE | SERIAL_RX_FRAME_FAILSAFE;
+            frameStatus = RX_FRAME_COMPLETE | RX_FRAME_FAILSAFE;
             break;
-        case SUMD_FRAME_STATE_OK:
-            frameStatus = SERIAL_RX_FRAME_COMPLETE;
+        case SUMDV1_FRAME_STATE_OK:
+        case SUMDV3_FRAME_STATE_OK:
+            frameStatus = RX_FRAME_COMPLETE;
             break;
         default:
             return frameStatus;
     }
 
-    if (sumdChannelCount > SUMD_MAX_CHANNEL)
-        sumdChannelCount = SUMD_MAX_CHANNEL;
+    unsigned channelsToProcess = MIN(sumdChannelCount, MAX_SUPPORTED_RC_CHANNEL_COUNT);
 
-    for (channelIndex = 0; channelIndex < sumdChannelCount; channelIndex++) {
+    for (unsigned channelIndex = 0; channelIndex < channelsToProcess; channelIndex++) {
         sumdChannels[channelIndex] = (
             (sumd[SUMD_BYTES_PER_CHANNEL * channelIndex + SUMD_OFFSET_CHANNEL_1_HIGH] << 8) |
             sumd[SUMD_BYTES_PER_CHANNEL * channelIndex + SUMD_OFFSET_CHANNEL_1_LOW]
@@ -186,8 +148,48 @@ uint8_t sumdFrameStatus(void)
     return frameStatus;
 }
 
-static uint16_t sumdReadRawRC(rxRuntimeConfig_t *rxRuntimeConfig, uint8_t chan)
+static uint16_t sumdReadRawRC(const rxRuntimeConfig_t *rxRuntimeConfig, uint8_t chan)
 {
     UNUSED(rxRuntimeConfig);
     return sumdChannels[chan] / 8;
 }
+
+bool sumdInit(const rxConfig_t *rxConfig, rxRuntimeConfig_t *rxRuntimeConfig)
+{
+    UNUSED(rxConfig);
+
+    rxRuntimeConfig->channelCount = MIN(SUMD_MAX_CHANNEL, MAX_SUPPORTED_RC_CHANNEL_COUNT);
+    rxRuntimeConfig->rxRefreshRate = 11000;
+
+    rxRuntimeConfig->rcReadRawFn = sumdReadRawRC;
+    rxRuntimeConfig->rcFrameStatusFn = sumdFrameStatus;
+
+    const serialPortConfig_t *portConfig = findSerialPortConfig(FUNCTION_RX_SERIAL);
+    if (!portConfig) {
+        return false;
+    }
+
+#ifdef USE_TELEMETRY
+    bool portShared = telemetryCheckRxPortShared(portConfig);
+#else
+    bool portShared = false;
+#endif
+
+    serialPort_t *sumdPort = openSerialPort(portConfig->identifier,
+        FUNCTION_RX_SERIAL,
+        sumdDataReceive,
+        NULL,
+        SUMD_BAUDRATE,
+        portShared ? MODE_RXTX : MODE_RX,
+        (rxConfig->serialrx_inverted ? SERIAL_INVERTED : 0) | (rxConfig->halfDuplex ? SERIAL_BIDIR : 0)
+        );
+
+#ifdef USE_TELEMETRY
+    if (portShared) {
+        telemetrySharedPort = sumdPort;
+    }
+#endif
+
+    return sumdPort != NULL;
+}
+#endif

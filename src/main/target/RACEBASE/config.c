@@ -1,83 +1,40 @@
 /*
- * This file is part of Cleanflight.
+ * This file is part of Cleanflight and Betaflight.
  *
- * Cleanflight is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Cleanflight and Betaflight are free software. You can redistribute
+ * this software and/or modify this software under the terms of the
+ * GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option)
+ * any later version.
  *
- * Cleanflight is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Cleanflight and Betaflight are distributed in the hope that they
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied
+ * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this software.
+ *
+ * If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <stdbool.h>
 #include <stdint.h>
 
-#include <platform.h>
+#include "platform.h"
 
-#include "build_config.h"
+#ifdef USE_TARGET_CONFIG
 
-#include "blackbox/blackbox_io.h"
+#include "fc/config.h"
 
-#include "common/color.h"
-#include "common/axis.h"
-#include "common/filter.h"
-
-#include "drivers/sensor.h"
-#include "drivers/accgyro.h"
-#include "drivers/compass.h"
-#include "drivers/system.h"
-#include "drivers/timer.h"
-#include "drivers/pwm_rx.h"
-#include "drivers/serial.h"
-#include "drivers/pwm_output.h"
-#include "drivers/max7456.h"
-#include "drivers/io.h"
-#include "drivers/pwm_mapping.h"
-
-#include "sensors/sensors.h"
-#include "sensors/gyro.h"
-#include "sensors/compass.h"
-#include "sensors/acceleration.h"
-#include "sensors/barometer.h"
-#include "sensors/boardalignment.h"
-#include "sensors/battery.h"
-
-#include "io/beeper.h"
-#include "io/serial.h"
-#include "io/gimbal.h"
-#include "io/escservo.h"
-#include "io/rc_controls.h"
-#include "io/rc_curves.h"
-#include "io/ledstrip.h"
-#include "io/gps.h"
-#include "io/osd.h"
-#include "io/vtx.h"
+#include "pg/rx.h"
 
 #include "rx/rx.h"
 
-#include "telemetry/telemetry.h"
-
-#include "flight/mixer.h"
-#include "flight/pid.h"
-#include "flight/imu.h"
-#include "flight/failsafe.h"
-#include "flight/altitudehold.h"
-#include "flight/navigation.h"
-
-#include "config/runtime_config.h"
-#include "config/config.h"
-
-#include "config/config_profile.h"
-#include "config/config_master.h"
-
-// alternative defaults settings for COLIBRI RACE targets
-void targetConfiguration(master_t *config) {
-    config->rxConfig.sbus_inversion = 0;
-    config->rxConfig.rssi_scale = 19;
-    config->rxConfig.serialrx_provider = SERIALRX_SBUS;
+void targetConfiguration(void)
+{
+    rxConfigMutable()->serialrx_inverted = true;
+    rxConfigMutable()->rssi_scale = 19;
+    rxConfigMutable()->serialrx_provider = SERIALRX_SBUS;
 }
+#endif

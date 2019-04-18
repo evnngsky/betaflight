@@ -30,7 +30,7 @@
 /** @addtogroup USB_OTG_DRIVER
   * @{
   */
- 
+
 /** @defgroup USB_CONF
   * @brief USB low level driver configuration file
   * @{
@@ -76,7 +76,7 @@
 
 /*******************************************************************************
 *                      FIFO Size Configuration in Device mode
-* 
+*
 *  (i) Receive data FIFO size = RAM for setup packets +
 *                   OUT endpoint control information +
 *                   data OUT packets + miscellaneous
@@ -161,12 +161,10 @@
 /****************** USB OTG FS CONFIGURATION **********************************/
 #ifdef USB_OTG_FS_CORE
  #define RX_FIFO_FS_SIZE                          128
- #define TX0_FIFO_FS_SIZE                          64
- #define TX1_FIFO_FS_SIZE                         128
+ #define TX0_FIFO_FS_SIZE                          32
+ #define TX1_FIFO_FS_SIZE                          64
  #define TX2_FIFO_FS_SIZE                          0
- #define TX3_FIFO_FS_SIZE                          0
- #define TXH_NP_FS_FIFOSIZ                         96
- #define TXH_P_FS_FIFOSIZ                          96
+ #define TX3_FIFO_FS_SIZE                          64
 
  //#define USB_OTG_FS_LOW_PWR_MGMT_SUPPORT
  //#define USB_OTG_FS_SOF_OUTPUT_ENABLED
@@ -215,16 +213,16 @@
   #else
     #define __ALIGN_END
     #if defined   (__CC_ARM)      /* ARM Compiler */
-      #define __ALIGN_BEGIN    __align(4) 
+      #define __ALIGN_BEGIN    __align(4)
     #elif defined (__ICCARM__)    /* IAR Compiler */
       #define __ALIGN_BEGIN
     #elif defined  (__TASKING__)  /* TASKING Compiler */
       #define __ALIGN_BEGIN    __align(4)
-    #endif /* __CC_ARM */ 
+    #endif /* __CC_ARM */
   #endif /* __GNUC__ */
 #else
   #define __ALIGN_BEGIN
-  #define __ALIGN_END  
+  #define __ALIGN_END
 #endif /* USB_OTG_HS_INTERNAL_DMA_ENABLED */
 
 /* __packed keyword used to decrease the data type alignment to 1-byte */
@@ -286,4 +284,3 @@
   * @}
   */
 /******************* (C) COPYRIGHT 2011 STMicroelectronics *****END OF FILE****/
-

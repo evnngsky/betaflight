@@ -26,6 +26,9 @@
  */
 
 /* Includes ------------------------------------------------------------------*/
+
+#include "platform.h"
+
 #include "usb_lib.h"
 #include "usb_conf.h"
 #include "usb_prop.h"
@@ -87,6 +90,10 @@ ONE_DESCRIPTOR String_Descriptor[4] = { { (uint8_t*)Virtual_Com_Port_StringLangI
  *******************************************************************************/
 void Virtual_Com_Port_init(void)
 {
+#ifdef STM32F10X
+    /* Make absolutly sure interrupts are disabled. */
+    USB_Interrupts_Disable();
+#endif
 
     /* Update the serial number string descriptor with the data from the unique
      ID*/
@@ -371,4 +378,3 @@ uint32_t Virtual_Com_Port_GetBaudRate(void)
 }
 
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
-

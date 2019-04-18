@@ -1,58 +1,59 @@
 /*
- * This file is part of Cleanflight.
+ * This file is part of Cleanflight and Betaflight.
  *
- * Cleanflight is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Cleanflight and Betaflight are free software. You can redistribute
+ * this software and/or modify this software under the terms of the
+ * GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option)
+ * any later version.
  *
- * Cleanflight is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Cleanflight and Betaflight are distributed in the hope that they
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied
+ * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this software.
+ *
+ * If not, see <http://www.gnu.org/licenses/>.
  */
 
 #pragma once
 
 #define TARGET_BOARD_IDENTIFIER "AIR3"
 
-#define CONFIG_FASTLOOP_PREFERRED_ACC ACC_DEFAULT
-#define CONFIG_PREFER_ACC_ON
+#define LED0_PIN                PB3
+#define LED1_PIN                PB4
 
-#define LED0                    PB3
-#define LED1                    PB4
-
-#define BEEPER                  PA12
+#define USE_BEEPER
+#define BEEPER_PIN              PA12
 #define BEEPER_INVERTED
 
 #define USE_EXTI
-#define MPU_INT_EXTI            PC13
-#define EXTI_CALLBACK_HANDLER_COUNT 1 // MPU INT
+#define USE_GYRO_EXTI
+#define GYRO_1_EXTI_PIN         PC13
 #define USE_MPU_DATA_READY_SIGNAL
 #define ENSURE_MPU_DATA_READY_IS_LOW
 
 #define USE_SPI
 #define USE_SPI_DEVICE_2
 
-#define MPU6500_CS_PIN          PB12
-#define MPU6500_SPI_INSTANCE    SPI2
+#define GYRO_1_CS_PIN           PB12
+#define GYRO_1_SPI_INSTANCE     SPI2
 
-#define GYRO
+#define USE_GYRO
 #define USE_GYRO_SPI_MPU6500
-#define GYRO_MPU6500_ALIGN      CW0_DEG
+#define GYRO_1_ALIGN            CW0_DEG
 
-#define ACC
+#define USE_ACC
 #define USE_ACC_SPI_MPU6500
-#define ACC_MPU6500_ALIGN       CW0_DEG
+#define ACC_1_ALIGN             CW0_DEG
 
-#define BARO
+#define USE_BARO
 #define USE_BARO_SPI_BMP280
 
-#define BMP280_SPI_INSTANCE     SPI2
-#define BMP280_CS_PIN           PB5
+#define BARO_SPI_INSTANCE       SPI2
+#define BARO_CS_PIN             PB5
 
 #define USE_UART1
 #define USE_UART2
@@ -61,12 +62,14 @@
 #define USE_SOFTSERIAL2
 #define SERIAL_PORT_COUNT       5
 
-#define SOFTSERIAL_1_TIMER TIM3
-#define SOFTSERIAL_1_TIMER_RX_HARDWARE 4 // PWM 5
-#define SOFTSERIAL_1_TIMER_TX_HARDWARE 5 // PWM 6
-#define SOFTSERIAL_2_TIMER TIM3
-#define SOFTSERIAL_2_TIMER_RX_HARDWARE 6 // PWM 7
-#define SOFTSERIAL_2_TIMER_TX_HARDWARE 7 // PWM 8
+#define USE_ESCSERIAL
+#define ESCSERIAL_TIMER_TX_PIN  PA0  // (HARDARE=0,PPM)
+
+#define SOFTSERIAL1_RX_PIN      PA6  // PWM 5
+#define SOFTSERIAL1_TX_PIN      PA7  // PWM 6
+
+#define SOFTSERIAL2_RX_PIN      PB6  // PWM 7
+#define SOFTSERIAL2_TX_PIN      PB1  // PWM 8
 
 #define UART1_TX_PIN            PA9
 #define UART1_RX_PIN            PA10
@@ -77,32 +80,15 @@
 #define UART3_TX_PIN            PB10 // PB10 (AF7)
 #define UART3_RX_PIN            PB11 // PB11 (AF7)
 
-#define BOARD_HAS_VOLTAGE_DIVIDER
+#define DEFAULT_VOLTAGE_METER_SOURCE VOLTAGE_METER_ADC
 #define USE_ADC
-#define CURRENT_METER_ADC_PIN   PB1
+#define ADC_INSTANCE            ADC2
 #define VBAT_ADC_PIN            PA4
-#define RSSI_ADC_PIN            PA1
 
-#define LED_STRIP
-#define WS2811_TIMER                    TIM3
-#define WS2811_PIN                      PA6
-#define WS2811_DMA_CHANNEL              DMA1_Channel6
-#define WS2811_DMA_TC_FLAG              DMA1_FLAG_TC6
-#define WS2811_DMA_HANDLER_IDENTIFER    DMA1_CH6_HANDLER
-
-#define GPS
-
-#define DEFAULT_FEATURES        FEATURE_VBAT
 #define DEFAULT_RX_FEATURE      FEATURE_RX_SERIAL
 #define SERIALRX_PROVIDER       SERIALRX_SBUS
 #define SERIALRX_UART           SERIAL_PORT_USART2
 #define RX_CHANNELS_TAER
-
-#define SPEKTRUM_BIND
-// USART3,
-#define BIND_PIN                PB11
-
-#define USE_SERIAL_4WAY_BLHELI_INTERFACE
 
 #define TARGET_IO_PORTA         0xffff
 #define TARGET_IO_PORTB         0xffff
@@ -111,4 +97,4 @@
 #define TARGET_IO_PORTF         (BIT(4))
 
 #define USABLE_TIMER_CHANNEL_COUNT 14
-#define USED_TIMERS             ( TIM_N(1) | TIM_N(2) | TIM_N(3) | TIM_N(4) )
+#define USED_TIMERS             ( TIM_N(1) | TIM_N(2) | TIM_N(3) | TIM_N(4) | TIM_N(8) )

@@ -56,6 +56,10 @@ defined in linker script */
 .word  _sbss
 /* end address for the .bss section. defined in linker script */
 .word  _ebss
+/* start address for the .fastram_bss section. defined in linker script */
+.word  __fastram_bss_start__
+/* end address for the .fastram_bss section. defined in linker script */
+.word  __fastram_bss_end__
 /* stack used for SystemInit_ExtMemCtl; always internal RAM used */
 
 /**
@@ -70,13 +74,18 @@ defined in linker script */
   .section  .text.Reset_Handler
   .weak  Reset_Handler
   .type  Reset_Handler, %function
-Reset_Handler:  
-  ldr r0, =0x2001FFFC         // mj666
-  ldr r1, =0xDEADBEEF         // mj666
-  ldr r2, [r0, #0]            // mj666
-  str r0, [r0, #0]            // mj666
-  cmp r2, r1                  // mj666
-  beq Reboot_Loader           // mj666
+Reset_Handler: 
+  // Enable CCM
+  // RCC->AHB1ENR |= RCC_AHB1ENR_CCMDATARAMEN;
+  ldr     r0, =0x40023800       // RCC_BASE
+  ldr     r1, [r0, #0x30]       // AHB1ENR
+  orr     r1, r1, 0x00100000    // RCC_AHB1ENR_CCMDATARAMEN
+  str     r1, [r0, #0x30]
+  dsb
+
+  // Defined in C code
+  bl persistentObjectInit
+  bl checkForBootLoaderRequest
 
 /* Copy the data segment initializers from flash to SRAM */  
   movs  r1, #0
@@ -94,6 +103,7 @@ LoopCopyDataInit:
   adds  r2, r0, r1
   cmp  r2, r3
   bcc  CopyDataInit
+
   ldr  r2, =_sbss
   b  LoopFillZerobss
 /* Zero fill the bss segment. */  
@@ -106,6 +116,31 @@ LoopFillZerobss:
   cmp  r2, r3
   bcc  FillZerobss
 
+  ldr  r2, =__fastram_bss_start__
+  b  LoopFillZerofastram_bss
+/* Zero fill the fastram_bss segment. */  
+FillZerofastram_bss:
+  movs  r3, #0
+  str  r3, [r2], #4
+    
+LoopFillZerofastram_bss:
+  ldr  r3, = __fastram_bss_end__
+  cmp  r2, r3
+  bcc  FillZerofastram_bss
+
+/* Mark the heap and stack */
+    ldr	r2, =_heap_stack_begin
+    b	LoopMarkHeapStack
+
+MarkHeapStack:
+	movs	r3, 0xa5a5a5a5
+	str	r3, [r2], #4
+
+LoopMarkHeapStack:
+	ldr	r3, = _heap_stack_end
+	cmp	r2, r3
+	bcc	MarkHeapStack
+
 /*FPU settings*/
  ldr     r0, =0xE000ED88           /* Enable CP10,CP11 */
  ldr     r1,[r0]
@@ -113,7 +148,8 @@ LoopFillZerobss:
  str     r1,[r0]
 
 /* Call the clock system intitialization function.*/
-  bl  SystemInit   
+/* Done in system_stm32f4xx.c */
+ bl  SystemInit
 
 /* Call the application's entry point.*/
   bl  main
@@ -121,14 +157,6 @@ LoopFillZerobss:
 
 LoopForever:
   b LoopForever
-
-Reboot_Loader:                // mj666
-
-  // Reboot to ROM            // mj666
-  ldr     r0, =0x1FFF0000     // mj666
-  ldr     sp,[r0, #0]         // mj666
-  ldr     r0,[r0, #4]         // mj666
-  bx      r0                  // mj666
 
 .size  Reset_Handler, .-Reset_Handler
 

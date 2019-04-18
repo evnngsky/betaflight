@@ -1,18 +1,21 @@
 /*
- * This file is part of Cleanflight.
+ * This file is part of Cleanflight and Betaflight.
  *
- * Cleanflight is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * Cleanflight and Betaflight are free software. You can redistribute
+ * this software and/or modify this software under the terms of the
+ * GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option)
+ * any later version.
  *
- * Cleanflight is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Cleanflight and Betaflight are distributed in the hope that they
+ * will be useful, but WITHOUT ANY WARRANTY; without even the implied
+ * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this software.
+ *
+ * If not, see <http://www.gnu.org/licenses/>.
  */
 
 #pragma once
@@ -23,7 +26,6 @@
 cfTask_t *unittest_scheduler_selectedTask;
 uint8_t unittest_scheduler_selectedTaskDynamicPriority;
 uint16_t unittest_scheduler_waitingTasks;
-uint32_t unittest_scheduler_timeToNextRealtimeTask;
 bool unittest_outsideRealtimeGuardInterval;
 
 #define GET_SCHEDULER_LOCALS() \
@@ -31,7 +33,6 @@ bool unittest_outsideRealtimeGuardInterval;
     unittest_scheduler_selectedTask = selectedTask; \
     unittest_scheduler_selectedTaskDynamicPriority = selectedTaskDynamicPriority; \
     unittest_scheduler_waitingTasks = waitingTasks; \
-    unittest_scheduler_timeToNextRealtimeTask = timeToNextRealtimeTask; \
     unittest_outsideRealtimeGuardInterval = outsideRealtimeGuardInterval; \
     }
 
@@ -49,9 +50,9 @@ bool unittest_outsideRealtimeGuardInterval;
 float unittest_pidLuxFloat_lastErrorForDelta[3];
 float unittest_pidLuxFloat_delta1[3];
 float unittest_pidLuxFloat_delta2[3];
-float unittest_pidLuxFloat_PTerm[3];
-float unittest_pidLuxFloat_ITerm[3];
-float unittest_pidLuxFloat_DTerm[3];
+float unittest_pidLuxFloat_pterm[3];
+float unittest_pidLuxFloat_iterm[3];
+float unittest_pidLuxFloat_dterm[3];
 
 #define SET_PID_LUX_FLOAT_LOCALS(axis) \
     { \
@@ -65,15 +66,15 @@ float unittest_pidLuxFloat_DTerm[3];
         unittest_pidLuxFloat_lastErrorForDelta[axis] = lastErrorForDelta[axis]; \
         unittest_pidLuxFloat_delta1[axis] = delta1[axis]; \
         unittest_pidLuxFloat_delta2[axis] = delta2[axis]; \
-        unittest_pidLuxFloat_PTerm[axis] = PTerm; \
-        unittest_pidLuxFloat_ITerm[axis] = ITerm; \
-        unittest_pidLuxFloat_DTerm[axis] = DTerm; \
+        unittest_pidLuxFloat_pterm[axis] = pterm; \
+        unittest_pidLuxFloat_iterm[axis] = iterm; \
+        unittest_pidLuxFloat_dterm[axis] = dterm; \
     }
 
 int32_t unittest_pidMultiWiiRewrite_lastErrorForDelta[3];
-int32_t unittest_pidMultiWiiRewrite_PTerm[3];
-int32_t unittest_pidMultiWiiRewrite_ITerm[3];
-int32_t unittest_pidMultiWiiRewrite_DTerm[3];
+int32_t unittest_pidMultiWiiRewrite_pterm[3];
+int32_t unittest_pidMultiWiiRewrite_iterm[3];
+int32_t unittest_pidMultiWiiRewrite_dterm[3];
 
 #define SET_PID_MULTI_WII_REWRITE_LOCALS(axis) \
     { \
@@ -83,9 +84,9 @@ int32_t unittest_pidMultiWiiRewrite_DTerm[3];
 #define GET_PID_MULTI_WII_REWRITE_LOCALS(axis) \
     { \
         unittest_pidMultiWiiRewrite_lastErrorForDelta[axis] = lastErrorForDelta[axis]; \
-        unittest_pidMultiWiiRewrite_PTerm[axis] = PTerm; \
-        unittest_pidMultiWiiRewrite_ITerm[axis] = ITerm; \
-        unittest_pidMultiWiiRewrite_DTerm[axis] = DTerm; \
+        unittest_pidMultiWiiRewrite_pterm[axis] = pterm; \
+        unittest_pidMultiWiiRewrite_iterm[axis] = iterm; \
+        unittest_pidMultiWiiRewrite_dterm[axis] = dterm; \
     }
 
 #else
@@ -97,4 +98,3 @@ int32_t unittest_pidMultiWiiRewrite_DTerm[3];
 
 #endif // UNIT_TEST
 #endif // SRC_MAIN_FLIGHT_PID_C_
-
